@@ -18,18 +18,20 @@ jobs:
       packages: write   # push to ghcr.io
 
     steps:
-      # Check out main repo under workspace/zerelio/
+      # Checkout main repo into workspace root (default path).
       - uses: actions/checkout@v4
-        with:
-          path: zerelio
 
-      # Check out plugin-sdk under workspace/plugin-sdk/ so the
-      # go.mod replace directive (../plugin-sdk) resolves inside Docker.
+      # Checkout plugin-sdk at ./plugin-sdk (within workspace — the
+      # actions/checkout constraint).
       - uses: actions/checkout@v4
         with:
           repository: zerelio/plugin-sdk
           path: plugin-sdk
-          token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Rewrite the replace directive from ../plugin-sdk → ./plugin-sdk
+      # so both go mod download (in CI) and the Dockerfile COPY work.
+      - name: Rewrite plugin-sdk replace for CI
+        run: go mod edit -replace=github.com/zerelio/plugin-sdk=./plugin-sdk
 
       - name: Set up QEMU (multi-platform emulation)
         uses: docker/setup-qemu-action@v3
@@ -59,13 +61,14 @@ jobs:
             org.opencontainers.image.vendor=Zerelio
             org.opencontainers.image.licenses=Apache-2.0
 
-      # Build context is the workspace root; Dockerfile is at zerelio/Dockerfile.
-      # This makes both zerelio/ and plugin-sdk/ available to COPY in the Dockerfile.
+      # Build context is the workspace root; Dockerfile expects:
+      #   ./plugin-sdk/   (checked out above)
+      #   ./go.mod, ./go.sum, ./<source>  (this repo, checked out at root)
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: zerelio/Dockerfile
+          file: Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

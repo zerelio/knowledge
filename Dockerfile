@@ -1,19 +1,19 @@
 FROM golang:1.26-alpine AS builder
 
-# Build context is the workspace root (parent of zerelio/ and plugin-sdk/).
-# go.mod uses: replace github.com/zerelio/plugin-sdk => ../plugin-sdk
-# so both modules must be present under /workspace/.
+# Build context is the repo root (same directory as Dockerfile).
+# The release workflow checks out plugin-sdk at ./plugin-sdk and rewrites
+# the go.mod replace directive to ./plugin-sdk before building, so both
+# the COPY below and go mod download resolve correctly.
 
-WORKDIR /workspace
+WORKDIR /src
 
-# Copy both modules into the workspace so the replace directive resolves.
-COPY plugin-sdk/ ./plugin-sdk/
-COPY zerelio/go.mod zerelio/go.sum ./zerelio/
+# Copy the plugin-sdk replacement first so go mod download can resolve it.
+COPY plugin-sdk/ /src/plugin-sdk/
 
-WORKDIR /workspace/zerelio
+COPY go.mod go.sum ./
 RUN go mod download
 
-COPY zerelio/ .
+COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -buildvcs=false \
     -ldflags="-s -w" \
     -o /bin/zerelio \
