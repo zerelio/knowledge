@@ -61,7 +61,8 @@ func (p *PGBackend) Connect(ctx context.Context) error {
 	cfg.PrepareConn = func(ctx context.Context, conn *pgx.Conn) (bool, error) {
 		tenantID := tenantIDFromContext(ctx)
 		if tenantID != "" {
-			_, err := conn.Exec(ctx, "SET app.current_tenant = $1", tenantID)
+			// SET does not accept parameterized values; use set_config() instead.
+			_, err := conn.Exec(ctx, "SELECT set_config('app.current_tenant', $1, false)", tenantID)
 			return true, err
 		}
 		_, err := conn.Exec(ctx, "RESET app.current_tenant")

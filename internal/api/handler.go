@@ -357,6 +357,7 @@ func (h *Handler) HandleListScopes(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
 	scopes, err := h.store.ListScopes(r.Context(), claims.TenantID)
 	if err != nil {
+		h.logger.Error("list scopes failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to list scopes")
 		return
 	}

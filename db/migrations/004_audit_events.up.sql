@@ -4,6 +4,9 @@ CREATE TABLE IF NOT EXISTS audit_events (
     user_id     TEXT,
     action      TEXT        NOT NULL,
     resource_id TEXT,
+    ip          TEXT,
+    status_code INT,
+    error       TEXT,
     metadata    JSONB,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

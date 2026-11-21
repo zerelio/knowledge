@@ -1,4 +1,9 @@
--- Enable Apache AGE for graph queries.
--- If AGE is not available (pgvector-only image), this is a no-op;
--- the application detects AGE absence and disables graph features gracefully.
-CREATE EXTENSION IF NOT EXISTS age;
+-- Enable Apache AGE for graph queries (optional — app handles absence gracefully).
+-- Using a DO block so this migration succeeds even when AGE is not installed.
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS age;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'Apache AGE extension not available — graph features will be disabled at runtime';
+END;
+$$;
