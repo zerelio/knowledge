@@ -1021,6 +1021,9 @@ func (h *Handler) HandleListWebhooks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list webhooks")
 		return
 	}
+	if subs == nil {
+		subs = []*types.WebhookSubscription{}
+	}
 	// Omit secrets from the response.
 	for _, s := range subs {
 		s.Secret = ""
