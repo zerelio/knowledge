@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -17,11 +18,15 @@ import (
 	"github.com/zerelio/zerelio/internal/api"
 	"github.com/zerelio/zerelio/internal/auth"
 	"github.com/zerelio/zerelio/internal/discovery"
+	"github.com/zerelio/zerelio/internal/mcp"
 	"github.com/zerelio/zerelio/internal/storage"
+	"github.com/zerelio/zerelio/internal/telemetry"
 )
 
+const version = "0.1.0"
+
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()}))
 	slog.SetDefault(logger)
 
 	if err := run(logger); err != nil {
@@ -36,45 +41,46 @@ func run(logger *slog.Logger) error {
 
 	addr := envOr("ZERELIO_ADDR", ":8080")
 	authDisabled := os.Getenv("ZERELIO_AUTH_DISABLED") == "true"
+	mcpHTTPEnabled := os.Getenv("ZERELIO_MCP_HTTP") == "true"
+	mcpStdioEnabled := os.Getenv("ZERELIO_MCP_STDIO") == "true"
+	mcpHTTPPort := envOrInt("ZERELIO_MCP_PORT", 9090)
 
 	jwtSvc, err := loadJWTService(authDisabled)
 	if err != nil {
 		return fmt.Errorf("jwt service: %w", err)
 	}
 
-	backend := storage.NewMemoryBackend()
-	if err := backend.Connect(ctx); err != nil {
-		return fmt.Errorf("storage connect: %w", err)
+	backend, err := connectStorage(ctx, logger)
+	if err != nil {
+		return fmt.Errorf("storage: %w", err)
 	}
 	defer backend.Close()
 
 	orch := discovery.NewOrchestrator(backend, logger)
 	handler := api.NewHandler(backend, jwtSvc, orch, logger)
+	mcpServer := mcp.NewServer(backend, logger)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
+	r.Use(telemetry.RequestLogger(logger))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(120 * time.Second))
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/health", telemetry.HealthCheck(version))
+	r.Get("/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, "0.1.0")
+		fmt.Fprintf(w, `{"version":%q}`, version)
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Post("/login", handler.HandleLogin)
-		r.Post("/register", handler.HandleRegister)
+		r.Post("/auth/login", handler.HandleLogin)
+		r.Post("/auth/register", handler.HandleRegister)
 
 		if authDisabled {
 			r.Use(func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					claims := &auth.Claims{
-						UserID: "dev_admin",
-						Email:  "admin@localhost",
-						Roles:  []string{"admin"},
-					}
+					claims := &auth.Claims{UserID: "dev_admin", Email: "admin@localhost", Roles: []string{"admin"}}
 					ctx := auth.ContextWithClaims(r.Context(), claims)
 					next.ServeHTTP(w, r.WithContext(ctx))
 				})
@@ -89,6 +95,7 @@ func run(logger *slog.Logger) error {
 
 		r.Get("/discovery/scopes", handler.HandleListScopes)
 		r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
+		r.Get("/discovery/plugins", handler.HandleListPlugins)
 
 		r.Group(func(r chi.Router) {
 			r.Use(auth.RequireRole("editor", "admin"))
@@ -105,6 +112,25 @@ func run(logger *slog.Logger) error {
 		})
 	})
 
+	// MCP stdio transport — for direct AI agent integration.
+	if mcpStdioEnabled {
+		go func() {
+			if err := mcpServer.ServeStdio(ctx); err != nil && err != context.Canceled {
+				logger.Error("mcp stdio error", "error", err)
+			}
+		}()
+	}
+
+	// MCP HTTP+SSE transport — for web chat integrations.
+	if mcpHTTPEnabled {
+		go func() {
+			logger.Info("starting mcp http server", "port", mcpHTTPPort)
+			if err := mcpServer.ServeHTTP(ctx, mcpHTTPPort); err != nil && err != context.Canceled {
+				logger.Error("mcp http error", "error", err)
+			}
+		}()
+	}
+
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      r,
@@ -115,7 +141,7 @@ func run(logger *slog.Logger) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("starting zerelio server", "addr", addr, "auth_disabled", authDisabled)
+		logger.Info("starting zerelio server", "addr", addr, "auth_disabled", authDisabled, "version", version)
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -130,13 +156,30 @@ func run(logger *slog.Logger) error {
 		defer shutdownCancel()
 		return srv.Shutdown(shutdownCtx)
 	}
-
 	return nil
+}
+
+func connectStorage(ctx context.Context, logger *slog.Logger) (storage.Backend, error) {
+	dsn := os.Getenv("ZERELIO_POSTGRES_DSN")
+	if dsn != "" {
+		logger.Info("connecting to postgresql", "dsn_prefix", dsn[:min(len(dsn), 30)])
+		pg := storage.NewPGBackend(dsn)
+		if err := pg.Connect(ctx); err != nil {
+			return nil, fmt.Errorf("postgres connect: %w", err)
+		}
+		logger.Info("postgresql connected")
+		return pg, nil
+	}
+	logger.Warn("no ZERELIO_POSTGRES_DSN — using in-memory storage (data not persisted)")
+	mem := storage.NewMemoryBackend()
+	if err := mem.Connect(ctx); err != nil {
+		return nil, err
+	}
+	return mem, nil
 }
 
 func loadJWTService(authDisabled bool) (*auth.JWTService, error) {
 	keyPath := os.Getenv("ZERELIO_JWT_PRIVATE_KEY")
-
 	if keyPath != "" {
 		data, err := os.ReadFile(keyPath)
 		if err != nil {
@@ -152,17 +195,15 @@ func loadJWTService(authDisabled bool) (*auth.JWTService, error) {
 		privKey := ed25519.NewKeyFromSeed(block.Bytes)
 		return auth.NewJWTService(privKey, 15*time.Minute, 7*24*time.Hour), nil
 	}
-
 	if authDisabled {
 		_, privKey, err := auth.GenerateKeyPair()
 		if err != nil {
 			return nil, err
 		}
-		slog.Warn("auth disabled: using ephemeral JWT keys (development mode only)")
+		slog.Warn("auth disabled: using ephemeral JWT keys (dev only)")
 		return auth.NewJWTService(privKey, 15*time.Minute, 7*24*time.Hour), nil
 	}
-
-	return nil, fmt.Errorf("ZERELIO_JWT_PRIVATE_KEY is required (set ZERELIO_AUTH_DISABLED=true for development)")
+	return nil, fmt.Errorf("ZERELIO_JWT_PRIVATE_KEY required (or set ZERELIO_AUTH_DISABLED=true)")
 }
 
 func envOr(key, fallback string) string {
@@ -170,4 +211,33 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envOrInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return fallback
+}
+
+func logLevel() slog.Level {
+	switch os.Getenv("ZERELIO_LOG_LEVEL") {
+	case "debug":
+		return slog.LevelDebug
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

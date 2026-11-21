@@ -7,53 +7,61 @@ import (
 	"sync"
 	"time"
 
+	sdkplugin "github.com/zerelio/plugin-sdk/plugin"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/pkg/types"
 )
 
-// Orchestrator coordinates discovery runs across all registered plugins.
-// It is responsible for:
-//   - Loading scopes from storage
-//   - Dispatching to the appropriate plugin
-//   - Persisting results to storage
-//   - Tracking run state (started → completed/failed)
+// Orchestrator coordinates discovery runs. It delegates subprocess plugin loading
+// to the SDK's PluginManager and falls back to in-process plugins registered
+// directly (useful for tests and embedded mode).
 type Orchestrator struct {
-	store   storage.Backend
-	plugins map[string]Plugin
-	logger  *slog.Logger
-	mu      sync.RWMutex
+	store          storage.Backend
+	manager        *sdkplugin.PluginManager
+	inProcessPlugins map[string]Plugin
+	logger         *slog.Logger
+	mu             sync.RWMutex
 }
 
 func NewOrchestrator(store storage.Backend, logger *slog.Logger) *Orchestrator {
 	return &Orchestrator{
-		store:   store,
-		plugins: make(map[string]Plugin),
-		logger:  logger,
+		store:            store,
+		manager:          sdkplugin.NewPluginManager(nil),
+		inProcessPlugins: make(map[string]Plugin),
+		logger:           logger,
 	}
 }
 
-// RegisterPlugin adds a plugin to the orchestrator.
-// If a plugin with the same name already exists, it is replaced.
+// RegisterPlugin registers an in-process plugin (for testing or embedded use).
 func (o *Orchestrator) RegisterPlugin(p Plugin) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	o.plugins[p.Name()] = p
-	o.logger.Info("registered discovery plugin", "plugin", p.Name())
+	o.inProcessPlugins[p.Name()] = p
+	o.logger.Info("registered in-process plugin", "plugin", p.Name())
+}
+
+// LoadSubprocessPlugin loads a plugin from a binary path via hashicorp/go-plugin.
+func (o *Orchestrator) LoadSubprocessPlugin(name, path string) error {
+	return o.manager.LoadPlugin(name, path)
 }
 
 // RunScope executes a discovery run for the given scope ID.
-// It is safe to call from multiple goroutines; each call gets its own run record.
+// Returns an error synchronously if the scope or plugin cannot be found.
 func (o *Orchestrator) RunScope(ctx context.Context, scopeID string) (*types.DiscoveryRun, error) {
 	scope, err := o.store.GetScope(ctx, scopeID)
 	if err != nil {
 		return nil, fmt.Errorf("get scope: %w", err)
 	}
 
-	o.mu.RLock()
-	plugin, ok := o.plugins[scope.PluginName]
-	o.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("plugin %q not registered", scope.PluginName)
+	// Validate plugin availability before creating the run record.
+	_, sdkErr := o.manager.GetPlugin(scope.PluginName)
+	if sdkErr != nil {
+		o.mu.RLock()
+		_, inProcOk := o.inProcessPlugins[scope.PluginName]
+		o.mu.RUnlock()
+		if !inProcOk {
+			return nil, fmt.Errorf("plugin %q not found", scope.PluginName)
+		}
 	}
 
 	run := &types.DiscoveryRun{
@@ -62,57 +70,98 @@ func (o *Orchestrator) RunScope(ctx context.Context, scopeID string) (*types.Dis
 		Status:    types.StatusRunning,
 		StartedAt: time.Now(),
 	}
-
 	if err := o.store.StoreRun(ctx, run); err != nil {
 		return nil, fmt.Errorf("store run: %w", err)
 	}
 
-	o.logger.Info("discovery run started",
-		"run_id", run.ID,
-		"scope_id", scope.ID,
-		"plugin", scope.PluginName,
-	)
+	o.logger.Info("discovery run started", "run_id", run.ID, "scope_id", scope.ID, "plugin", scope.PluginName)
 
-	// Snapshot before goroutine launch. executeRun owns the original pointer exclusively.
 	snapshot := *run
-	go o.executeRun(ctx, run, scope, plugin)
+	go o.executeRun(ctx, run, scope)
 	return &snapshot, nil
 }
 
-func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, scope *types.DiscoveryScope, plugin Plugin) {
+func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, scope *types.DiscoveryScope) {
 	var runErrors []string
-	resourceCount := 0
-	relCount := 0
+	resourceCount, relCount := 0, 0
 
-	resultCh, err := plugin.Discover(ctx, scope)
-	if err != nil {
-		o.failRun(ctx, run, fmt.Sprintf("plugin discover: %v", err))
-		return
-	}
-
-	for result := range resultCh {
-		if result.Err != nil {
-			runErrors = append(runErrors, result.Err.Error())
-			o.logger.Warn("discovery error from plugin",
-				"plugin", plugin.Name(),
-				"error", result.Err,
-			)
-			continue
+	// Try subprocess plugin first, fall back to in-process.
+	sdkPlug, sdkErr := o.manager.GetPlugin(scope.PluginName)
+	if sdkErr != nil {
+		// In-process fallback.
+		o.mu.RLock()
+		inProc, ok := o.inProcessPlugins[scope.PluginName]
+		o.mu.RUnlock()
+		if !ok {
+			o.failRun(ctx, run, fmt.Sprintf("plugin %q not found (subprocess: %v)", scope.PluginName, sdkErr))
+			return
 		}
-
-		if len(result.Resources) > 0 {
-			if err := o.store.StoreResources(ctx, result.Resources); err != nil {
-				runErrors = append(runErrors, fmt.Sprintf("store resources: %v", err))
-			} else {
-				resourceCount += len(result.Resources)
+		// Use the simple in-process plugin path.
+		resultCh, err := inProc.Discover(ctx, scope)
+		if err != nil {
+			o.failRun(ctx, run, fmt.Sprintf("plugin discover: %v", err))
+			return
+		}
+		for result := range resultCh {
+			if result.Err != nil {
+				runErrors = append(runErrors, result.Err.Error())
+				continue
+			}
+			if len(result.Resources) > 0 {
+				if err := o.store.StoreResources(ctx, result.Resources); err != nil {
+					runErrors = append(runErrors, fmt.Sprintf("store resources: %v", err))
+				} else {
+					resourceCount += len(result.Resources)
+				}
+			}
+			if len(result.Relationships) > 0 {
+				if err := o.store.StoreRelationships(ctx, result.Relationships); err != nil {
+					runErrors = append(runErrors, fmt.Sprintf("store relationships: %v", err))
+				} else {
+					relCount += len(result.Relationships)
+				}
+			}
+		}
+	} else {
+		// Real subprocess plugin via SDK.
+		req := &sdkplugin.DiscoverRequest{
+			ScopeID: scope.ID,
+			Config:  scope.Config,
+		}
+		if scope.CredentialSource != nil {
+			req.CredentialSource = sdkplugin.CredentialSource{
+				Type:   scope.CredentialSource.Type,
+				Path:   scope.CredentialSource.Path,
+				Params: scope.CredentialSource.Params,
 			}
 		}
 
-		if len(result.Relationships) > 0 {
-			if err := o.store.StoreRelationships(ctx, result.Relationships); err != nil {
-				runErrors = append(runErrors, fmt.Sprintf("store relationships: %v", err))
-			} else {
-				relCount += len(result.Relationships)
+		eventCh, err := sdkPlug.Discover(ctx, req)
+		if err != nil {
+			o.failRun(ctx, run, fmt.Sprintf("plugin discover: %v", err))
+			return
+		}
+
+		for event := range eventCh {
+			if event.Error != nil {
+				runErrors = append(runErrors, event.Error.Message)
+				continue
+			}
+			if event.Resource != nil {
+				r := sdkResourceToTypes(event.Resource)
+				if err := o.store.StoreResources(ctx, []*types.Resource{r}); err != nil {
+					runErrors = append(runErrors, fmt.Sprintf("store resource: %v", err))
+				} else {
+					resourceCount++
+				}
+			}
+			if event.Relationship != nil {
+				rel := sdkRelToTypes(event.Relationship)
+				if err := o.store.StoreRelationships(ctx, []*types.Relationship{rel}); err != nil {
+					runErrors = append(runErrors, fmt.Sprintf("store relationship: %v", err))
+				} else {
+					relCount++
+				}
 			}
 		}
 	}
@@ -130,15 +179,12 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 	}
 
 	if err := o.store.StoreRun(ctx, run); err != nil {
-		o.logger.Error("failed to persist run completion", "run_id", run.ID, "error", err)
+		o.logger.Error("failed to persist run", "run_id", run.ID, "error", err)
 	}
 
 	o.logger.Info("discovery run completed",
-		"run_id", run.ID,
-		"status", run.Status,
-		"resources", resourceCount,
-		"relationships", relCount,
-		"errors", len(runErrors),
+		"run_id", run.ID, "status", run.Status,
+		"resources", resourceCount, "relationships", relCount, "errors", len(runErrors),
 	)
 }
 
@@ -147,21 +193,46 @@ func (o *Orchestrator) failRun(ctx context.Context, run *types.DiscoveryRun, err
 	run.CompletedAt = &now
 	run.Status = types.StatusFailed
 	run.Errors = []string{errMsg}
-
-	if err := o.store.StoreRun(ctx, run); err != nil {
-		o.logger.Error("failed to persist failed run", "run_id", run.ID, "error", err)
-	}
-
+	o.store.StoreRun(ctx, run)
 	o.logger.Error("discovery run failed", "run_id", run.ID, "error", errMsg)
 }
 
-// ListPlugins returns the names of all registered plugins.
+// ListPlugins returns the names of all available plugins (subprocess + in-process).
 func (o *Orchestrator) ListPlugins() []string {
+	names := o.manager.ListPlugins()
 	o.mu.RLock()
 	defer o.mu.RUnlock()
-	names := make([]string, 0, len(o.plugins))
-	for name := range o.plugins {
+	for name := range o.inProcessPlugins {
 		names = append(names, name)
 	}
 	return names
+}
+
+// ─── Type adapters ───────────────────────────────────────────────────────────
+
+func sdkResourceToTypes(e *sdkplugin.ResourceEvent) *types.Resource {
+	r := &types.Resource{
+		ID:           e.ID,
+		Type:         e.Type,
+		Name:         e.Name,
+		Provider:     e.Provider,
+		Region:       e.Region,
+		AccountID:    e.AccountID,
+		Tags:         e.Tags,
+		DiscoveredAt: time.Unix(e.DiscoveredAt, 0),
+	}
+	r.Properties = make(map[string]string, len(e.Properties))
+	for k, v := range e.Properties {
+		r.Properties[k] = v
+	}
+	return r
+}
+
+func sdkRelToTypes(e *sdkplugin.RelationshipEvent) *types.Relationship {
+	return &types.Relationship{
+		SourceID:   e.SourceID,
+		TargetID:   e.TargetID,
+		Type:       e.Type,
+		Properties: make(map[string]string),
+	}
 }

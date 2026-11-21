@@ -302,6 +302,14 @@ func (h *Handler) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 }
 
+func (h *Handler) HandleListPlugins(w http.ResponseWriter, r *http.Request) {
+	var plugins []string
+	if h.orch != nil {
+		plugins = h.orch.ListPlugins()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": plugins})
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
