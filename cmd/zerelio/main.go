@@ -188,7 +188,10 @@ func run(logger *slog.Logger) error {
 
 	r.Use(ipLimiter)
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// Note: middleware.RealIP was deprecated in chi v5.5.0 due to IP spoofing risk.
+	// Use ZERELIO_TRUSTED_PROXIES (CIDR list) to enable trusted proxy header forwarding
+	// once the new TrustedProxies middleware is configured by the operator.
+	// For now, RemoteAddr reflects the direct connection address.
 	r.Use(telemetry.RequestLogger(logger))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(120 * time.Second))
