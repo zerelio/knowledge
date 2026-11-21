@@ -182,6 +182,25 @@ func run(logger *slog.Logger) error {
 
 	r := chi.NewRouter()
 
+	// CORS — allow any origin for local dev; restrict to configured origin in production.
+	corsOrigin := os.Getenv("ZERELIO_CORS_ORIGIN")
+	if corsOrigin == "" {
+		corsOrigin = "*"
+	}
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", corsOrigin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+
 	// Rate limiting — IP-level before everything.
 	rlCfg := ratelimit.Config{}
 	ipLimiter, userLimiter := ratelimit.Middleware(rlCfg, logger)

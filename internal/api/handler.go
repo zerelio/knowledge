@@ -497,7 +497,10 @@ func (h *Handler) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list runs")
 		return
 	}
-	writeJSON(w, http.StatusOK, runs)
+	if runs == nil {
+		runs = []*types.DiscoveryRun{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 }
 
 // HandleListAllRuns returns recent discovery runs across all scopes.
@@ -514,7 +517,10 @@ func (h *Handler) HandleListAllRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list runs")
 		return
 	}
-	writeJSON(w, http.StatusOK, runs)
+	if runs == nil {
+		runs = []*types.DiscoveryRun{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 }
 
 // HandleGetRun returns a single discovery run by its ID.
