@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,8 @@ type MemoryBackend struct {
 	genFeedback     map[string][]*types.GenerationFeedback
 	documents       map[string]*types.CachedDocument // keyed by resource_id
 	config          map[string]string
+	changes         []*types.ResourceChange
+	webhooks        map[string]*types.WebhookSubscription
 }
 
 func NewMemoryBackend() *MemoryBackend {
@@ -37,6 +40,7 @@ func NewMemoryBackend() *MemoryBackend {
 		genFeedback:   make(map[string][]*types.GenerationFeedback),
 		documents:     make(map[string]*types.CachedDocument),
 		config:        make(map[string]string),
+		webhooks:      make(map[string]*types.WebhookSubscription),
 	}
 }
 
@@ -77,12 +81,33 @@ func (m *MemoryBackend) GetResources(_ context.Context, f ResourceFilter) ([]*ty
 		result = append(result, r)
 	}
 
+	// Always sort (discovered_at DESC, id DESC) for deterministic cursor pagination.
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].DiscoveredAt.Equal(result[j].DiscoveredAt) {
+			return result[i].ID > result[j].ID
+		}
+		return result[i].DiscoveredAt.After(result[j].DiscoveredAt)
+	})
+
 	total := len(result)
 
-	if f.Offset > 0 && f.Offset < len(result) {
-		result = result[f.Offset:]
-	} else if f.Offset >= len(result) {
-		result = nil
+	if f.AfterDiscoveredAt != nil {
+		// Keyset filter: keep only items that come after the cursor position.
+		var filtered []*types.Resource
+		for _, r := range result {
+			if r.DiscoveredAt.Before(*f.AfterDiscoveredAt) ||
+				(r.DiscoveredAt.Equal(*f.AfterDiscoveredAt) && r.ID < f.AfterID) {
+				filtered = append(filtered, r)
+			}
+		}
+		result = filtered
+	} else {
+		// Legacy offset-based pagination.
+		if f.Offset > 0 && f.Offset < len(result) {
+			result = result[f.Offset:]
+		} else if f.Offset >= len(result) {
+			result = nil
+		}
 	}
 	if f.Limit > 0 && f.Limit < len(result) {
 		result = result[:f.Limit]
@@ -559,4 +584,83 @@ func (m *MemoryBackend) UpdateDocumentStatus(_ context.Context, id string, statu
 		}
 	}
 	return fmt.Errorf("document %s not found", id)
+}
+
+// ---- Change detection ----
+
+func (m *MemoryBackend) RecordChange(_ context.Context, c *types.ResourceChange) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.changes = append(m.changes, c)
+	return nil
+}
+
+func (m *MemoryBackend) ListChanges(_ context.Context, scopeID, tenantID string, limit int) ([]*types.ResourceChange, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	var result []*types.ResourceChange
+	for i := len(m.changes) - 1; i >= 0 && len(result) < limit; i-- {
+		c := m.changes[i]
+		if scopeID != "" && c.ScopeID != scopeID {
+			continue
+		}
+		if tenantID != "" && c.TenantID != tenantID {
+			continue
+		}
+		result = append(result, c)
+	}
+	return result, nil
+}
+
+// ---- Webhook subscriptions ----
+
+func (m *MemoryBackend) CreateWebhook(_ context.Context, sub *types.WebhookSubscription) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.webhooks[sub.ID] = sub
+	return nil
+}
+
+func (m *MemoryBackend) ListWebhooks(_ context.Context, tenantID string) ([]*types.WebhookSubscription, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []*types.WebhookSubscription
+	for _, w := range m.webhooks {
+		if tenantID != "" && w.TenantID != tenantID {
+			continue
+		}
+		result = append(result, w)
+	}
+	return result, nil
+}
+
+func (m *MemoryBackend) DeleteWebhook(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.webhooks, id)
+	return nil
+}
+
+func (m *MemoryBackend) ListWebhooksForEvent(_ context.Context, tenantID string, eventType types.EventType) ([]*types.WebhookSubscription, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []*types.WebhookSubscription
+	for _, w := range m.webhooks {
+		if !w.Active {
+			continue
+		}
+		if tenantID != "" && w.TenantID != tenantID {
+			continue
+		}
+		for _, e := range w.Events {
+			if e == string(eventType) || e == "*" {
+				result = append(result, w)
+				break
+			}
+		}
+	}
+	return result, nil
 }

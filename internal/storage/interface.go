@@ -16,6 +16,12 @@ type ResourceFilter struct {
 	Query    string
 	Limit    int
 	Offset   int
+	// Cursor-based pagination fields (keyset).  When AfterDiscoveredAt is set,
+	// Offset is ignored and the backend returns resources discovered strictly
+	// before this timestamp (or at the same timestamp with a lexicographically
+	// smaller ID), ordered by (discovered_at DESC, id DESC).
+	AfterDiscoveredAt *time.Time
+	AfterID           string
 }
 
 type RelationshipFilter struct {
@@ -83,4 +89,14 @@ type Backend interface {
 	UpdateDocumentStatus(ctx context.Context, id string, status types.DocumentStatus, approvedBy string) error
 
 	ExportGraph(ctx context.Context, tenantID string) ([]*types.Resource, []*types.Relationship, error)
+
+	// Change detection
+	RecordChange(ctx context.Context, c *types.ResourceChange) error
+	ListChanges(ctx context.Context, scopeID, tenantID string, limit int) ([]*types.ResourceChange, error)
+
+	// Webhook subscriptions
+	CreateWebhook(ctx context.Context, sub *types.WebhookSubscription) error
+	ListWebhooks(ctx context.Context, tenantID string) ([]*types.WebhookSubscription, error)
+	DeleteWebhook(ctx context.Context, id string) error
+	ListWebhooksForEvent(ctx context.Context, tenantID string, eventType types.EventType) ([]*types.WebhookSubscription, error)
 }

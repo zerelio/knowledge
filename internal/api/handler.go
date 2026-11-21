@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,7 @@ import (
 	"github.com/zerelio/zerelio/internal/auth"
 	"github.com/zerelio/zerelio/internal/discovery"
 	"github.com/zerelio/zerelio/internal/docs"
+	"github.com/zerelio/zerelio/internal/events"
 	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/search"
 	"github.com/zerelio/zerelio/internal/storage"
@@ -25,6 +27,7 @@ type Handler struct {
 	graph    *graph.Graph     // optional; nil when no PG backend
 	searcher *search.Searcher // optional; nil when no PG backend
 	docGen   *docs.Generator  // optional; nil when LLM not configured
+	bus      *events.Bus      // optional; nil when event bus not configured
 	logger   *slog.Logger
 }
 
@@ -50,6 +53,11 @@ func (h *Handler) SetSearcher(s *search.Searcher) {
 // SetDocGenerator attaches the doc generation module.
 func (h *Handler) SetDocGenerator(g *docs.Generator) {
 	h.docGen = g
+}
+
+// SetEventBus attaches the event bus to the handler.
+func (h *Handler) SetEventBus(b *events.Bus) {
+	h.bus = b
 }
 
 func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -140,13 +148,35 @@ func (h *Handler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) HandleListResources(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromContext(r.Context())
+
+	limit := 100
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
 	filter := storage.ResourceFilter{
 		Type:     r.URL.Query().Get("type"),
 		Provider: r.URL.Query().Get("provider"),
 		Region:   r.URL.Query().Get("region"),
 		Query:    r.URL.Query().Get("q"),
 		TenantID: claims.TenantID,
-		Limit:    100,
+		Limit:    limit,
+	}
+
+	if cursorStr := r.URL.Query().Get("cursor"); cursorStr != "" {
+		t, id, err := decodeCursor(cursorStr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid cursor")
+			return
+		}
+		filter.AfterDiscoveredAt = &t
+		filter.AfterID = id
+	} else if s := r.URL.Query().Get("offset"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
+			filter.Offset = n
+		}
 	}
 
 	resources, total, err := h.store.GetResources(r.Context(), filter)
@@ -155,10 +185,45 @@ func (h *Handler) HandleListResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var nextCursor string
+	hasMore := false
+	if len(resources) == limit && limit > 0 {
+		hasMore = true
+		nextCursor = encodeCursor(resources[len(resources)-1])
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resources": resources,
-		"total":     total,
+		"resources":   resources,
+		"total":       total,
+		"next_cursor": nextCursor,
+		"has_more":    hasMore,
 	})
+}
+
+// cursorPayload is the JSON structure embedded in a base64 cursor token.
+type cursorPayload struct {
+	AfterDiscoveredAt time.Time `json:"after_discovered_at"`
+	AfterID           string    `json:"after_id"`
+}
+
+// encodeCursor returns a base64-encoded JSON cursor pointing just after r.
+func encodeCursor(r *types.Resource) string {
+	p := cursorPayload{AfterDiscoveredAt: r.DiscoveredAt, AfterID: r.ID}
+	b, _ := json.Marshal(p)
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// decodeCursor decodes a cursor token produced by encodeCursor.
+func decodeCursor(s string) (time.Time, string, error) {
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return time.Time{}, "", err
+	}
+	var p cursorPayload
+	if err := json.Unmarshal(b, &p); err != nil {
+		return time.Time{}, "", err
+	}
+	return p.AfterDiscoveredAt, p.AfterID, nil
 }
 
 func (h *Handler) HandleGetResource(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +369,92 @@ func (h *Handler) HandleCreateScope(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, &req)
 }
 
+func (h *Handler) HandleGetScope(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	scope, err := h.store.GetScope(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "scope not found")
+		return
+	}
+
+	claims := auth.ClaimsFromContext(r.Context())
+	if scope.TenantID != claims.TenantID && !containsRole(claims.Roles, "admin") {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, scope)
+}
+
+func (h *Handler) HandleUpdateScope(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	scope, err := h.store.GetScope(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "scope not found")
+		return
+	}
+
+	claims := auth.ClaimsFromContext(r.Context())
+	if scope.TenantID != claims.TenantID && !containsRole(claims.Roles, "admin") {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	var patch struct {
+		Name     *string           `json:"name"`
+		Schedule *string           `json:"schedule"`
+		Config   map[string]string `json:"config"`
+		Status   *string           `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if patch.Name != nil {
+		scope.Name = *patch.Name
+	}
+	if patch.Schedule != nil {
+		scope.Schedule = *patch.Schedule
+	}
+	if patch.Config != nil {
+		scope.Config = patch.Config
+	}
+	if patch.Status != nil {
+		scope.Status = *patch.Status
+	}
+	scope.UpdatedAt = time.Now()
+
+	if err := h.store.UpdateScope(r.Context(), scope); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update scope")
+		return
+	}
+	writeJSON(w, http.StatusOK, scope)
+}
+
+func (h *Handler) HandleDeleteScope(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	scope, err := h.store.GetScope(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "scope not found")
+		return
+	}
+
+	claims := auth.ClaimsFromContext(r.Context())
+	if scope.TenantID != claims.TenantID && !containsRole(claims.Roles, "admin") {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	if err := h.store.DeleteScope(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete scope")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *Handler) HandleRunScope(w http.ResponseWriter, r *http.Request) {
 	if h.orch == nil {
 		writeError(w, http.StatusServiceUnavailable, "discovery not configured")
@@ -328,6 +479,25 @@ func (h *Handler) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+}
+
+// HandleListChanges returns resource changes detected for a scope.
+// GET /api/v1/discovery/scopes/{id}/changes?limit=50
+func (h *Handler) HandleListChanges(w http.ResponseWriter, r *http.Request) {
+	scopeID := chi.URLParam(r, "id")
+	claims := auth.ClaimsFromContext(r.Context())
+	limit := 50
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	changes, err := h.store.ListChanges(r.Context(), scopeID, claims.TenantID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list changes")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"changes": changes, "total": len(changes)})
 }
 
 func (h *Handler) HandleListPlugins(w http.ResponseWriter, r *http.Request) {

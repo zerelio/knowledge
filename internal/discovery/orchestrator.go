@@ -8,7 +8,9 @@ import (
 	"time"
 
 	sdkplugin "github.com/zerelio/plugin-sdk/plugin"
+	"github.com/zerelio/zerelio/internal/change"
 	"github.com/zerelio/zerelio/internal/embedding"
+	"github.com/zerelio/zerelio/internal/events"
 	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/pkg/types"
@@ -21,8 +23,10 @@ type Orchestrator struct {
 	store            storage.Backend
 	manager          *sdkplugin.PluginManager
 	inProcessPlugins map[string]Plugin
-	graph            *graph.Graph     // optional; nil when running without PostgreSQL
+	graph            *graph.Graph        // optional; nil when running without PostgreSQL
 	embedder         *embedding.Embedder // optional; nil when LLM not configured
+	detector         *change.Detector    // optional; nil when change detection disabled
+	bus              *events.Bus         // optional; nil when event bus not configured
 	logger           *slog.Logger
 	mu               sync.RWMutex
 }
@@ -44,6 +48,16 @@ func (o *Orchestrator) SetGraph(g *graph.Graph) {
 // SetEmbedder attaches an optional embedder for post-run embedding.
 func (o *Orchestrator) SetEmbedder(e *embedding.Embedder) {
 	o.embedder = e
+}
+
+// SetDetector attaches an optional change detector for diffing resources between runs.
+func (o *Orchestrator) SetDetector(d *change.Detector) {
+	o.detector = d
+}
+
+// SetEventBus attaches an optional event bus for emitting discovery events.
+func (o *Orchestrator) SetEventBus(b *events.Bus) {
+	o.bus = b
 }
 
 // RegisterPlugin registers an in-process plugin (for testing or embedded use).
@@ -116,23 +130,39 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 			o.failRun(ctx, run, fmt.Sprintf("plugin discover: %v", err))
 			return
 		}
+		// Collect all resources first so DetectAndRecord sees old DB state.
+		var allResources []*types.Resource
+		type batchResult struct {
+			resources     []*types.Resource
+			relationships []*types.Relationship
+		}
+		var batches []batchResult
 		for result := range resultCh {
 			if result.Err != nil {
 				runErrors = append(runErrors, result.Err.Error())
 				continue
 			}
-			if len(result.Resources) > 0 {
-				if err := o.store.StoreResources(ctx, result.Resources); err != nil {
+			allResources = append(allResources, result.Resources...)
+			batches = append(batches, batchResult{result.Resources, result.Relationships})
+		}
+		if o.detector != nil {
+			if _, err := o.detector.DetectAndRecord(ctx, scope.ID, run.ID, scope.TenantID, allResources); err != nil {
+				o.logger.Warn("change detection error", "run_id", run.ID, "error", err)
+			}
+		}
+		for _, b := range batches {
+			if len(b.resources) > 0 {
+				if err := o.store.StoreResources(ctx, b.resources); err != nil {
 					runErrors = append(runErrors, fmt.Sprintf("store resources: %v", err))
 				} else {
-					resourceCount += len(result.Resources)
+					resourceCount += len(b.resources)
 				}
 			}
-			if len(result.Relationships) > 0 {
-				if err := o.store.StoreRelationships(ctx, result.Relationships); err != nil {
+			if len(b.relationships) > 0 {
+				if err := o.store.StoreRelationships(ctx, b.relationships); err != nil {
 					runErrors = append(runErrors, fmt.Sprintf("store relationships: %v", err))
 				} else {
-					relCount += len(result.Relationships)
+					relCount += len(b.relationships)
 				}
 			}
 		}
@@ -156,22 +186,43 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 			return
 		}
 
+		// Collect all resources first so DetectAndRecord sees old DB state.
+		type sdkEvent struct {
+			resource     *types.Resource
+			relationship *types.Relationship
+		}
+		var sdkEvents []sdkEvent
+		var sdkResources []*types.Resource
 		for event := range eventCh {
 			if event.Error != nil {
 				runErrors = append(runErrors, event.Error.Message)
 				continue
 			}
+			var ev sdkEvent
 			if event.Resource != nil {
-				r := sdkResourceToTypes(event.Resource)
-				if err := o.store.StoreResources(ctx, []*types.Resource{r}); err != nil {
+				ev.resource = sdkResourceToTypes(event.Resource)
+				sdkResources = append(sdkResources, ev.resource)
+			}
+			if event.Relationship != nil {
+				ev.relationship = sdkRelToTypes(event.Relationship)
+			}
+			sdkEvents = append(sdkEvents, ev)
+		}
+		if o.detector != nil {
+			if _, err := o.detector.DetectAndRecord(ctx, scope.ID, run.ID, scope.TenantID, sdkResources); err != nil {
+				o.logger.Warn("change detection error", "run_id", run.ID, "error", err)
+			}
+		}
+		for _, ev := range sdkEvents {
+			if ev.resource != nil {
+				if err := o.store.StoreResources(ctx, []*types.Resource{ev.resource}); err != nil {
 					runErrors = append(runErrors, fmt.Sprintf("store resource: %v", err))
 				} else {
 					resourceCount++
 				}
 			}
-			if event.Relationship != nil {
-				rel := sdkRelToTypes(event.Relationship)
-				if err := o.store.StoreRelationships(ctx, []*types.Relationship{rel}); err != nil {
+			if ev.relationship != nil {
+				if err := o.store.StoreRelationships(ctx, []*types.Relationship{ev.relationship}); err != nil {
 					runErrors = append(runErrors, fmt.Sprintf("store relationship: %v", err))
 				} else {
 					relCount++
@@ -194,6 +245,22 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 
 	if err := o.store.StoreRun(ctx, run); err != nil {
 		o.logger.Error("failed to persist run", "run_id", run.ID, "error", err)
+	}
+
+	// Emit discovery event if the bus is configured.
+	if o.bus != nil {
+		evType := types.EventDiscoveryCompleted
+		if run.Status == types.StatusFailed {
+			evType = types.EventDiscoveryFailed
+		}
+		o.bus.Emit(context.Background(), &types.Event{
+			ID:         fmt.Sprintf("evt_%d", time.Now().UnixNano()),
+			Type:       evType,
+			TenantID:   scope.TenantID,
+			ScopeID:    scope.ID,
+			RunID:      run.ID,
+			OccurredAt: now,
+		})
 	}
 
 	// Update scope: record last run time and resource count.
@@ -229,6 +296,14 @@ func (o *Orchestrator) failRun(ctx context.Context, run *types.DiscoveryRun, err
 	run.Errors = []string{errMsg}
 	o.store.StoreRun(ctx, run)
 	o.logger.Error("discovery run failed", "run_id", run.ID, "error", errMsg)
+	if o.bus != nil {
+		o.bus.Emit(context.Background(), &types.Event{
+			ID:         fmt.Sprintf("evt_%d", time.Now().UnixNano()),
+			Type:       types.EventDiscoveryFailed,
+			RunID:      run.ID,
+			OccurredAt: now,
+		})
+	}
 }
 
 // ListPlugins returns the names of all available plugins (subprocess + in-process).

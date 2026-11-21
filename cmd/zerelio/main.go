@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/zerelio/zerelio/internal/api"
 	"github.com/zerelio/zerelio/internal/auth"
+	"github.com/zerelio/zerelio/internal/change"
 	"github.com/zerelio/zerelio/internal/discovery"
 	"github.com/zerelio/zerelio/internal/docs"
 	"github.com/zerelio/zerelio/internal/embedding"
@@ -90,6 +91,9 @@ func run(logger *slog.Logger) error {
 
 	orch := discovery.NewOrchestrator(backend, logger)
 	loadPlugins(orch, logger)
+
+	detector := change.New(backend, logger)
+	orch.SetDetector(detector)
 
 	var graphSvc *graph.Graph
 	var searchSvc *search.Searcher
@@ -194,7 +198,9 @@ func run(logger *slog.Logger) error {
 		r.Put("/generations/{id}/status", handler.HandleDocumentStatus)
 
 		r.Get("/discovery/scopes", handler.HandleListScopes)
+		r.Get("/discovery/scopes/{id}", handler.HandleGetScope)
 		r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
+		r.Get("/discovery/scopes/{id}/changes", handler.HandleListChanges)
 		r.Get("/discovery/plugins", handler.HandleListPlugins)
 
 		r.Group(func(r chi.Router) {
@@ -202,6 +208,8 @@ func run(logger *slog.Logger) error {
 			r.Post("/resources", handler.HandleCreateResources)
 			r.Delete("/resources/{id}", handler.HandleDeleteResource)
 			r.Post("/discovery/scopes", handler.HandleCreateScope)
+			r.Patch("/discovery/scopes/{id}", handler.HandleUpdateScope)
+			r.Delete("/discovery/scopes/{id}", handler.HandleDeleteScope)
 			r.Post("/discovery/scopes/{id}/run", handler.HandleRunScope)
 		})
 
