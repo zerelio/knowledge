@@ -55,12 +55,12 @@ The core server is functional with auth, storage interface, discovery orchestrat
 - [ ] SBOM generation (CycloneDX)
 - [ ] Remaining 16 plugin migrations
 
-## Milestone 1.0 — Zerelio Security scaffold
+## Milestone 1.0 — Zerelio Security scaffold (complete)
 
-**Goal**: Commercial product foundation.
+**Goal**: Commercial product foundation as a separate bounded module.
 
-- [ ] `security/` module with go.mod
-- [ ] License validation module (Ed25519 JWT from license server)
-- [ ] RBAC policy engine (OPA or rego-based)
-- [ ] Threat intelligence enrichment hooks
-- [ ] CI boundary enforcement (security/ cannot import knowledge/internal/)
+- [x] `security/` module with go.mod (separate from platform)
+- [x] RBAC policy engine — pure-Go enforcer, Rego policy spec, 6 tests
+- [x] Threat intelligence enrichment — interface + NoopEnricher + MisconfigEnricher + CompositeEnricher, 5 tests
+- [x] CI boundary enforcement — security/ cannot import zerelio/internal/
+- ~~[ ] License validation module~~ — removed (see ADR-008: self-hosted OSS has no license server)
