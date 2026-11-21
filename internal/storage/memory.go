@@ -19,18 +19,24 @@ type MemoryBackend struct {
 	users           map[string]*types.User
 	refreshTokens   map[string]*types.RefreshToken
 	auditEvents     []*types.AuditEvent
+	generations     map[string]*types.GenerationLog
+	genFeedback     map[string][]*types.GenerationFeedback
+	documents       map[string]*types.CachedDocument // keyed by resource_id
 	config          map[string]string
 }
 
 func NewMemoryBackend() *MemoryBackend {
 	return &MemoryBackend{
-		resources:       make(map[string]*types.Resource),
-		relationships:   make(map[string]*types.Relationship),
-		scopes:          make(map[string]*types.DiscoveryScope),
-		runs:            make(map[string]*types.DiscoveryRun),
-		users:           make(map[string]*types.User),
-		refreshTokens:   make(map[string]*types.RefreshToken),
-		config:          make(map[string]string),
+		resources:     make(map[string]*types.Resource),
+		relationships: make(map[string]*types.Relationship),
+		scopes:        make(map[string]*types.DiscoveryScope),
+		runs:          make(map[string]*types.DiscoveryRun),
+		users:         make(map[string]*types.User),
+		refreshTokens: make(map[string]*types.RefreshToken),
+		generations:   make(map[string]*types.GenerationLog),
+		genFeedback:   make(map[string][]*types.GenerationFeedback),
+		documents:     make(map[string]*types.CachedDocument),
+		config:        make(map[string]string),
 	}
 }
 
@@ -401,4 +407,156 @@ func (m *MemoryBackend) ListAuditEvents(_ context.Context, tenantID string, limi
 		}
 	}
 	return result, nil
+}
+
+// ---- Generation logs & feedback ----
+
+func (m *MemoryBackend) LogGeneration(_ context.Context, log *types.GenerationLog) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.generations[log.ID] = log
+	return nil
+}
+
+func (m *MemoryBackend) GetGeneration(_ context.Context, id string) (*types.GenerationLog, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	g, ok := m.generations[id]
+	if !ok {
+		return nil, fmt.Errorf("generation %s not found", id)
+	}
+	return g, nil
+}
+
+func (m *MemoryBackend) ListGenerations(_ context.Context, tenantID, resourceID string, limit int) ([]*types.GenerationLog, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	var result []*types.GenerationLog
+	for _, g := range m.generations {
+		if tenantID != "" && g.TenantID != tenantID {
+			continue
+		}
+		if resourceID != "" && g.ResourceID != resourceID {
+			continue
+		}
+		result = append(result, g)
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (m *MemoryBackend) LogGenerationFeedback(_ context.Context, fb *types.GenerationFeedback) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.genFeedback[fb.GenerationID] = append(m.genFeedback[fb.GenerationID], fb)
+	return nil
+}
+
+func (m *MemoryBackend) ListGenerationFeedback(_ context.Context, generationID string) ([]*types.GenerationFeedback, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.genFeedback[generationID], nil
+}
+
+func (m *MemoryBackend) GetApprovedExamples(_ context.Context, genType types.GenerationType, _ string, limit int) ([]*types.GenerationLog, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 3
+	}
+	var result []*types.GenerationLog
+	for id, fbs := range m.genFeedback {
+		for _, fb := range fbs {
+			if fb.Rating >= 1 {
+				if g, ok := m.generations[id]; ok && g.Type == genType {
+					result = append(result, g)
+					break
+				}
+			}
+		}
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (m *MemoryBackend) GetQualityMetrics(_ context.Context, tenantID string) (*types.QualityMetrics, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	metrics := &types.QualityMetrics{
+		ByType:    make(map[string]int),
+		ByAnomaly: make(map[string]int),
+	}
+	for _, g := range m.generations {
+		if tenantID != "" && g.TenantID != tenantID {
+			continue
+		}
+		metrics.TotalGenerations++
+		metrics.ByType[string(g.Type)]++
+	}
+	for _, fbs := range m.genFeedback {
+		for _, fb := range fbs {
+			metrics.WithFeedback++
+			if fb.Rating > 0 {
+				metrics.ApprovalRate++
+			} else if fb.Rating < 0 {
+				metrics.RejectionRate++
+			}
+			if fb.AnomalyType != "" {
+				metrics.ByAnomaly[string(fb.AnomalyType)]++
+				if fb.AnomalyType == types.AnomalyHallucination {
+					metrics.HallucinationRate++
+				}
+			}
+		}
+	}
+	if metrics.WithFeedback > 0 {
+		f := float64(metrics.WithFeedback)
+		metrics.ApprovalRate /= f
+		metrics.RejectionRate /= f
+		metrics.HallucinationRate /= f
+	}
+	return metrics, nil
+}
+
+// ---- Document cache ----
+
+func (m *MemoryBackend) UpsertDocument(_ context.Context, doc *types.CachedDocument) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.documents[doc.ResourceID] = doc
+	return nil
+}
+
+func (m *MemoryBackend) GetDocument(_ context.Context, resourceID string) (*types.CachedDocument, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	doc, ok := m.documents[resourceID]
+	if !ok {
+		return nil, fmt.Errorf("document for resource %s not found", resourceID)
+	}
+	return doc, nil
+}
+
+func (m *MemoryBackend) UpdateDocumentStatus(_ context.Context, id string, status types.DocumentStatus, approvedBy string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, doc := range m.documents {
+		if doc.ID == id {
+			doc.Status = status
+			doc.ApprovedBy = approvedBy
+			if status == types.DocumentApproved {
+				now := time.Now()
+				doc.ApprovedAt = &now
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("document %s not found", id)
 }

@@ -414,6 +414,101 @@ func (h *Handler) HandleGenerateRunbook(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, rb)
 }
 
+// ---- Generation feedback + quality ----
+
+// HandleSubmitFeedback records human feedback on a generation.
+// POST /api/v1/generations/{id}/feedback
+func (h *Handler) HandleSubmitFeedback(w http.ResponseWriter, r *http.Request) {
+	genID := chi.URLParam(r, "id")
+	var req types.GenerationFeedback
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	claims := auth.ClaimsFromContext(r.Context())
+	req.ID = fmt.Sprintf("fb_%d", time.Now().UnixNano())
+	req.GenerationID = genID
+	req.UserID = claims.UserID
+	req.TenantID = claims.TenantID
+	req.CreatedAt = time.Now()
+
+	if err := h.store.LogGenerationFeedback(r.Context(), &req); err != nil {
+		h.logger.Error("log generation feedback", "gen_id", genID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to save feedback")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]string{"id": req.ID, "generation_id": genID})
+}
+
+// HandleGetGeneration returns a generation log with its full context and feedback.
+// GET /api/v1/generations/{id}
+func (h *Handler) HandleGetGeneration(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	gen, err := h.store.GetGeneration(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "generation not found")
+		return
+	}
+	feedback, _ := h.store.ListGenerationFeedback(r.Context(), id)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"generation": gen,
+		"feedback":   feedback,
+	})
+}
+
+// HandleListGenerations lists generation logs for a tenant.
+// GET /api/v1/generations?resource_id=...&limit=50
+func (h *Handler) HandleListGenerations(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	resourceID := r.URL.Query().Get("resource_id")
+	limit := 50
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	gens, err := h.store.ListGenerations(r.Context(), claims.TenantID, resourceID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list generations")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"generations": gens, "total": len(gens)})
+}
+
+// HandleDocumentStatus updates a document's review status.
+// PUT /api/v1/generations/{id}/status
+// Body: {"status": "approved"|"rejected"|"flagged"}
+func (h *Handler) HandleDocumentStatus(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Status == "" {
+		writeError(w, http.StatusBadRequest, "status required")
+		return
+	}
+	claims := auth.ClaimsFromContext(r.Context())
+	status := types.DocumentStatus(req.Status)
+	if err := h.store.UpdateDocumentStatus(r.Context(), id, status, claims.UserID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update status")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"id": id, "status": req.Status})
+}
+
+// HandleQualityMetrics returns aggregated quality metrics for AI generations.
+// GET /api/v1/admin/quality
+func (h *Handler) HandleQualityMetrics(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	metrics, err := h.store.GetQualityMetrics(r.Context(), claims.TenantID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get quality metrics")
+		return
+	}
+	writeJSON(w, http.StatusOK, metrics)
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

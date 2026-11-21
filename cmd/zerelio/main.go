@@ -90,7 +90,8 @@ func run(logger *slog.Logger) error {
 	var docGen *docs.Generator
 
 	// LLM provider — configured from env, noop if not set.
-	llmProvider := llm.NewFromEnv()
+	// Wrapped with OTel tracing so every Embed/Complete call gets a span.
+	llmProvider := llm.WithTracing(llm.NewFromEnv())
 	if !llm.IsNoop(llmProvider) {
 		logger.Info("LLM provider active", "provider", llmProvider.Name())
 	} else {
@@ -179,6 +180,11 @@ func run(logger *slog.Logger) error {
 		r.Get("/docs/{id}", handler.HandleGenerateDoc)
 		r.Post("/runbooks", handler.HandleGenerateRunbook)
 
+		r.Get("/generations", handler.HandleListGenerations)
+		r.Get("/generations/{id}", handler.HandleGetGeneration)
+		r.Post("/generations/{id}/feedback", handler.HandleSubmitFeedback)
+		r.Put("/generations/{id}/status", handler.HandleDocumentStatus)
+
 		r.Get("/discovery/scopes", handler.HandleListScopes)
 		r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
 		r.Get("/discovery/plugins", handler.HandleListPlugins)
@@ -196,6 +202,7 @@ func run(logger *slog.Logger) error {
 			r.Get("/admin/users", handler.HandleListUsers)
 			r.Post("/admin/users", handler.HandleCreateUser)
 			r.Get("/admin/audit", handler.HandleListAuditEvents)
+			r.Get("/admin/quality", handler.HandleQualityMetrics)
 		})
 	})
 

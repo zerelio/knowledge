@@ -68,5 +68,19 @@ type Backend interface {
 	LogAuditEvent(ctx context.Context, event *types.AuditEvent) error
 	ListAuditEvents(ctx context.Context, tenantID string, limit int) ([]*types.AuditEvent, error)
 
+	// Generation logs and feedback (AI output auditability)
+	LogGeneration(ctx context.Context, log *types.GenerationLog) error
+	GetGeneration(ctx context.Context, id string) (*types.GenerationLog, error)
+	ListGenerations(ctx context.Context, tenantID, resourceID string, limit int) ([]*types.GenerationLog, error)
+	LogGenerationFeedback(ctx context.Context, fb *types.GenerationFeedback) error
+	ListGenerationFeedback(ctx context.Context, generationID string) ([]*types.GenerationFeedback, error)
+	GetApprovedExamples(ctx context.Context, genType types.GenerationType, hint string, limit int) ([]*types.GenerationLog, error)
+	GetQualityMetrics(ctx context.Context, tenantID string) (*types.QualityMetrics, error)
+
+	// Document cache
+	UpsertDocument(ctx context.Context, doc *types.CachedDocument) error
+	GetDocument(ctx context.Context, resourceID string) (*types.CachedDocument, error)
+	UpdateDocumentStatus(ctx context.Context, id string, status types.DocumentStatus, approvedBy string) error
+
 	ExportGraph(ctx context.Context, tenantID string) ([]*types.Resource, []*types.Relationship, error)
 }
