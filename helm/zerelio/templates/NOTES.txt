@@ -1,0 +1,81 @@
+Thank you for installing {{ .Chart.Name }} v{{ .Chart.AppVersion }}!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ACCESS THE APPLICATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if .Values.ingress.enabled }}
+  Your Ingress is enabled. Navigate to:
+  {{- range .Values.ingress.hosts }}
+    http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+  {{- end }}
+{{- else if eq .Values.service.type "NodePort" }}
+  export NODE_PORT=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "zerelio.fullname" . }} -o jsonpath="{.spec.ports[0].nodePort}")
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo "Open: http://$NODE_IP:$NODE_PORT"
+{{- else if eq .Values.service.type "LoadBalancer" }}
+  export LB_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "zerelio.fullname" . }} --template "{{"{{range (index .status.loadBalancer.ingress 0)}}{{.}}{{end}}"}}")
+  echo "Open: http://$LB_IP:{{ .Values.service.port }}"
+  NOTE: It may take a few minutes for the LoadBalancer IP to be assigned.
+{{- else }}
+  # Port-forward to access Zerelio locally:
+  kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "zerelio.fullname" . }} 8080:{{ .Values.service.port }}
+  echo "Open: http://127.0.0.1:8080"
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  SECURITY — set secrets before going to production
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. JWT secret
+     helm upgrade {{ .Release.Name }} zerelio/zerelio \
+       --reuse-values \
+       --set config.jwtSecret="$(openssl rand -hex 32)"
+
+  2. PostgreSQL password
+     helm upgrade {{ .Release.Name }} zerelio/zerelio \
+       --reuse-values \
+       --set postgresql.auth.postgresPassword="<strong-password>"
+
+  3. External database (disable bundled PostgreSQL)
+     helm upgrade {{ .Release.Name }} zerelio/zerelio \
+       --reuse-values \
+       --set postgresql.enabled=false \
+       --set externalDatabase.host=<host> \
+       --set externalDatabase.user=<user> \
+       --set externalDatabase.password=<password> \
+       --set externalDatabase.database=<dbname>
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  OIDC SINGLE SIGN-ON (optional)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  helm upgrade {{ .Release.Name }} zerelio/zerelio \
+    --reuse-values \
+    --set config.oidc.issuer=https://accounts.example.com \
+    --set config.oidc.clientId=<client-id> \
+    --set config.oidc.clientSecret=<client-secret> \
+    --set config.oidc.redirectUrl=https://zerelio.example.com/auth/callback
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  LLM INTEGRATION (optional)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  helm upgrade {{ .Release.Name }} zerelio/zerelio \
+    --reuse-values \
+    --set config.llm.provider=openai \
+    --set config.llm.apiKey=<your-api-key> \
+    --set config.llm.model=gpt-4o
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  FIRST DISCOVERY SCOPE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Once the pod is running and healthy:
+
+  # Verify the health endpoint
+  kubectl exec -n {{ .Release.Namespace }} deploy/{{ include "zerelio.fullname" . }} \
+    -- wget -qO- http://localhost:8080/api/v1/health
+
+  # Create your first scope via the API (replace TOKEN with a valid JWT)
+  curl -X POST http://127.0.0.1:8080/api/v1/scopes \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"my-infra","description":"Initial infrastructure discovery"}'
+
+  For full API documentation see: https://github.com/zerelio/zerelio/docs

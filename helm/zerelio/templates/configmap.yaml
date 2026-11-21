@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "zerelio.fullname" . }}
+  labels:
+    {{- include "zerelio.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  ZERELIO_AUTH_DISABLED: {{ .Values.config.authDisabled | toString | quote }}
+  ZERELIO_SCHEDULER_ENABLED: {{ .Values.config.schedulerEnabled | toString | quote }}
+  ZERELIO_OTEL_ENDPOINT: {{ .Values.config.otel.endpoint | quote }}
+  ZERELIO_OTEL_SERVICE_NAME: {{ .Values.config.otel.serviceName | quote }}
+  ZERELIO_LLM_PROVIDER: {{ .Values.config.llm.provider | quote }}
+  ZERELIO_LLM_MODEL: {{ .Values.config.llm.model | quote }}
+  ZERELIO_LLM_BASE_URL: {{ .Values.config.llm.baseUrl | quote }}
+  ZERELIO_OIDC_ISSUER: {{ .Values.config.oidc.issuer | quote }}
+  ZERELIO_OIDC_CLIENT_ID: {{ .Values.config.oidc.clientId | quote }}
+  ZERELIO_OIDC_REDIRECT_URL: {{ .Values.config.oidc.redirectUrl | quote }}
+  ZERELIO_OIDC_AUTO_PROVISION: {{ .Values.config.oidc.autoProvision | toString | quote }}
+  ZERELIO_OIDC_DEFAULT_ROLES: {{ .Values.config.oidc.defaultRoles | quote }}
