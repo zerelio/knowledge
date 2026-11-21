@@ -605,3 +605,49 @@ func (p *PGBackend) RevokeUserRefreshTokens(ctx context.Context, userID string) 
 	_, err := p.pool.Exec(ctx, `UPDATE refresh_tokens SET revoked=TRUE WHERE user_id=$1`, userID)
 	return err
 }
+
+// ---- Audit events ----
+
+func (p *PGBackend) LogAuditEvent(ctx context.Context, event *types.AuditEvent) error {
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO audit_events (id, user_id, tenant_id, action, resource_id, ip, status_code, error, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		event.ID, event.UserID, event.TenantID, event.Action,
+		event.ResourceID, event.IP, event.StatusCode, event.Error, event.CreatedAt,
+	)
+	return err
+}
+
+func (p *PGBackend) ListAuditEvents(ctx context.Context, tenantID string, limit int) ([]*types.AuditEvent, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var args []any
+	where := ""
+	if tenantID != "" {
+		where = "WHERE tenant_id = $1"
+		args = append(args, tenantID)
+	}
+	args = append(args, limit)
+
+	rows, err := p.pool.Query(ctx, `
+		SELECT id, user_id, tenant_id, action, resource_id, ip, status_code, error, created_at
+		FROM audit_events `+where+` ORDER BY created_at DESC LIMIT $`+fmt.Sprintf("%d", len(args)),
+		args...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*types.AuditEvent
+	for rows.Next() {
+		e := &types.AuditEvent{}
+		if err := rows.Scan(&e.ID, &e.UserID, &e.TenantID, &e.Action,
+			&e.ResourceID, &e.IP, &e.StatusCode, &e.Error, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		results = append(results, e)
+	}
+	return results, rows.Err()
+}

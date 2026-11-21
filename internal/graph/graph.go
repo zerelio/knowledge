@@ -45,11 +45,6 @@ func (g *Graph) Setup(ctx context.Context) error {
 	}
 
 	// Create the named graph (no-op if it already exists).
-	_, err = conn.Exec(ctx,
-		`SELECT * FROM ag_graph WHERE name = $1`,
-		g.name,
-	)
-
 	var graphExists bool
 	row := conn.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ag_graph WHERE name = $1)`, g.name)
 	if err := row.Scan(&graphExists); err != nil {

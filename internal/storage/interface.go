@@ -65,5 +65,8 @@ type Backend interface {
 	GetConfig(ctx context.Context, key string) (string, error)
 	SetConfig(ctx context.Context, key, value string) error
 
+	LogAuditEvent(ctx context.Context, event *types.AuditEvent) error
+	ListAuditEvents(ctx context.Context, tenantID string, limit int) ([]*types.AuditEvent, error)
+
 	ExportGraph(ctx context.Context, tenantID string) ([]*types.Resource, []*types.Relationship, error)
 }

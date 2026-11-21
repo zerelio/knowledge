@@ -54,7 +54,6 @@ func RequireRole(roles ...string) func(http.Handler) http.Handler {
 			}
 
 			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
-			return
 		})
 	}
 }

@@ -165,80 +165,51 @@ func (s *Searcher) bm25(ctx context.Context, p Params) ([]scoredID, error) {
 		return s.recentResources(ctx, p)
 	}
 
-	var conds []string
-	var args []any
-	i := 1
-
-	// Full-text match on name + type + provider.
+	// $1 = tsQuery (used in WHERE and ts_rank)
+	// $2 = ILIKE pattern
+	// $3..N = field filters (provider, type, tenant_id)
+	// $N+1 = limit
 	tsQuery := plainto_tsquery(p.Query)
-	args = append(args, tsQuery)
-	conds = append(conds, fmt.Sprintf(`
-		to_tsvector('english', coalesce(name,'') || ' ' || coalesce(type,'') || ' ' || coalesce(provider,''))
-		@@ plainto_tsquery('english', $%d)`, i))
-	i++
+	ilikePat := "%" + p.Query + "%"
+	args := []any{tsQuery, ilikePat}
+	i := 3 // next arg index
 
-	if p.Provider != "" {
-		conds = append(conds, fmt.Sprintf("provider = $%d", i))
-		args = append(args, p.Provider)
-		i++
-	}
-	if p.Type != "" {
-		conds = append(conds, fmt.Sprintf("type = $%d", i))
-		args = append(args, p.Type)
-		i++
-	}
-	if p.TenantID != "" {
-		conds = append(conds, fmt.Sprintf("tenant_id = $%d", i))
-		args = append(args, p.TenantID)
-		i++
-	}
-
-	where := "WHERE " + strings.Join(conds, " AND ")
-	// Add a fallback ILIKE condition with OR so partial matches also appear.
-	fallbackArg := "%" + p.Query + "%"
-	args = append(args, fallbackArg)
-	where = fmt.Sprintf(`
-		WHERE (
-			to_tsvector('english', coalesce(name,'') || ' ' || coalesce(type,'') || ' ' || coalesce(provider,''))
-			@@ plainto_tsquery('english', $1)
-			OR name ILIKE $%d OR type ILIKE $%d OR provider ILIKE $%d
-		)`, i, i, i)
-	i++
-	// re-build with field filters
 	var fieldConds []string
-	argIdx := i
 	if p.Provider != "" {
-		fieldConds = append(fieldConds, fmt.Sprintf("AND provider = $%d", argIdx))
+		fieldConds = append(fieldConds, fmt.Sprintf("AND provider = $%d", i))
 		args = append(args, p.Provider)
-		argIdx++
+		i++
 	}
 	if p.Type != "" {
-		fieldConds = append(fieldConds, fmt.Sprintf("AND type = $%d", argIdx))
+		fieldConds = append(fieldConds, fmt.Sprintf("AND type = $%d", i))
 		args = append(args, p.Type)
-		argIdx++
+		i++
 	}
 	if p.TenantID != "" {
-		fieldConds = append(fieldConds, fmt.Sprintf("AND tenant_id = $%d", argIdx))
+		fieldConds = append(fieldConds, fmt.Sprintf("AND tenant_id = $%d", i))
 		args = append(args, p.TenantID)
-		argIdx++
+		i++
 	}
 
-	rankArg := argIdx
-	args = append(args, tsQuery)
-	limitArg := argIdx + 1
-	args = append(args, p.Limit*3) // fetch 3x to have candidates for fusion
+	limitIdx := i
+	args = append(args, p.Limit*3) // fetch 3x candidates for RRF fusion
 
 	query := fmt.Sprintf(`
 		SELECT id,
 		       ts_rank(
 		           to_tsvector('english', coalesce(name,'') || ' ' || coalesce(type,'') || ' ' || coalesce(provider,'')),
-		           plainto_tsquery('english', $%d)
+		           plainto_tsquery('english', $1)
 		       ) AS rank
 		FROM resources
-		%s %s
+		WHERE (
+			to_tsvector('english', coalesce(name,'') || ' ' || coalesce(type,'') || ' ' || coalesce(provider,''))
+			@@ plainto_tsquery('english', $1)
+			OR name ILIKE $2 OR type ILIKE $2 OR provider ILIKE $2
+		)
+		%s
 		ORDER BY rank DESC
 		LIMIT $%d`,
-		rankArg, where, strings.Join(fieldConds, " "), limitArg)
+		strings.Join(fieldConds, " "), limitIdx)
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {

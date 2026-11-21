@@ -331,6 +331,36 @@ func (h *Handler) HandleListPlugins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"plugins": plugins})
 }
 
+func (h *Handler) HandleListAuditEvents(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	limit := 100
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	// Admins can query cross-tenant; others see only their own tenant.
+	tenantID := claims.TenantID
+	if r.URL.Query().Get("tenant_id") != "" && containsRole(claims.Roles, "admin") {
+		tenantID = r.URL.Query().Get("tenant_id")
+	}
+	events, err := h.store.ListAuditEvents(r.Context(), tenantID, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list audit events")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "total": len(events)})
+}
+
+func containsRole(roles []string, role string) bool {
+	for _, r := range roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

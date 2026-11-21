@@ -22,6 +22,7 @@ import (
 	"github.com/zerelio/zerelio/internal/discovery"
 	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/mcp"
+	"github.com/zerelio/zerelio/internal/ratelimit"
 	"github.com/zerelio/zerelio/internal/search"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/internal/telemetry"
@@ -53,6 +54,23 @@ func run(logger *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("jwt service: %w", err)
 	}
+
+	// OTel trace + Prometheus metrics.
+	otelProviders, err := telemetry.Setup(ctx, "zerelio", version, logger)
+	if err != nil {
+		logger.Warn("OTel setup failed — observability disabled", "error", err)
+	}
+	if otelProviders != nil {
+		defer otelProviders.Shutdown(context.Background())
+	}
+
+	// Wire user-ID extractor for rate limiter (after JWT service is ready).
+	ratelimit.SetUserIDExtractor(func(r *http.Request) string {
+		if claims := auth.ClaimsFromContext(r.Context()); claims != nil {
+			return claims.UserID
+		}
+		return ""
+	})
 
 	backend, err := connectStorage(ctx, logger)
 	if err != nil {
@@ -92,13 +110,21 @@ func run(logger *slog.Logger) error {
 	}
 
 	r := chi.NewRouter()
+
+	// Rate limiting — IP-level before everything.
+	rlCfg := ratelimit.Config{}
+	ipLimiter, userLimiter := ratelimit.Middleware(rlCfg, logger)
+
+	r.Use(ipLimiter)
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(telemetry.RequestLogger(logger))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(120 * time.Second))
+	r.Use(telemetry.AuditLogger(backend, logger))
 
 	r.Get("/health", telemetry.HealthCheck(version))
+	r.Get("/metrics", telemetry.MetricsHandler().ServeHTTP)
 	r.Get("/version", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintf(w, `{"version":%q}`, version)
@@ -120,6 +146,7 @@ func run(logger *slog.Logger) error {
 		} else {
 			r.Use(auth.Authenticator(jwtSvc))
 		}
+		r.Use(userLimiter)
 
 		r.Get("/resources", handler.HandleListResources)
 		r.Get("/resources/{id}", handler.HandleGetResource)
@@ -144,6 +171,7 @@ func run(logger *slog.Logger) error {
 			r.Use(auth.RequireRole("admin"))
 			r.Get("/admin/users", handler.HandleListUsers)
 			r.Post("/admin/users", handler.HandleCreateUser)
+			r.Get("/admin/audit", handler.HandleListAuditEvents)
 		})
 	})
 

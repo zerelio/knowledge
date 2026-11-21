@@ -18,6 +18,7 @@ type MemoryBackend struct {
 	runs            map[string]*types.DiscoveryRun
 	users           map[string]*types.User
 	refreshTokens   map[string]*types.RefreshToken
+	auditEvents     []*types.AuditEvent
 	config          map[string]string
 }
 
@@ -372,4 +373,32 @@ func (m *MemoryBackend) RevokeUserRefreshTokens(_ context.Context, userID string
 		}
 	}
 	return nil
+}
+
+// ---- Audit events ----
+
+func (m *MemoryBackend) LogAuditEvent(_ context.Context, event *types.AuditEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.auditEvents == nil {
+		m.auditEvents = make([]*types.AuditEvent, 0)
+	}
+	m.auditEvents = append(m.auditEvents, event)
+	return nil
+}
+
+func (m *MemoryBackend) ListAuditEvents(_ context.Context, tenantID string, limit int) ([]*types.AuditEvent, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	var result []*types.AuditEvent
+	for i := len(m.auditEvents) - 1; i >= 0 && len(result) < limit; i-- {
+		e := m.auditEvents[i]
+		if tenantID == "" || e.TenantID == tenantID {
+			result = append(result, e)
+		}
+	}
+	return result, nil
 }

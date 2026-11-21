@@ -52,14 +52,3 @@ func HealthCheck(version string) http.HandlerFunc {
 		fmt.Fprintf(w, `{"status":"ok","version":%q}`, version)
 	}
 }
-
-// statusWriter captures the HTTP status code from ResponseWriter.
-type statusWriter struct {
-	http.ResponseWriter
-	status int
-}
-
-func (w *statusWriter) WriteHeader(code int) {
-	w.status = code
-	w.ResponseWriter.WriteHeader(code)
-}
