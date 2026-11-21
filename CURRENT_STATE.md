@@ -2,7 +2,7 @@
 
 Last updated: 2026-11-21 (Session 002)
 
-## Status: Milestone 0.2 in progress — auth hardened, storage interface complete
+## Status: Milestones 0.2 + 0.3 (partial) complete
 
 ### Core server
 
@@ -16,12 +16,17 @@ Last updated: 2026-11-21 (Session 002)
 | Storage — MemoryBackend | ✅ Complete | Thread-safe, all 32 methods |
 | Storage — PGBackend | ✅ Complete | All 32 methods; UpdateScope persists last_run |
 | Storage — PGBackend integration tests | ✅ Complete | testcontainers-go, build tag: integration |
-| API — HTTP handlers | ✅ Complete | 14 handlers (added HandleRefresh), 6 tests |
+| API — HTTP handlers | ✅ Complete | 16 handlers (refresh, neighborhood, cypher), 8 tests |
 | Discovery — Plugin interface | ✅ Complete | Channel-based streaming |
-| Discovery — Orchestrator | ✅ Complete | Updates scope LastRun + ResourceCount after run |
+| Discovery — Orchestrator | ✅ Complete | Updates scope LastRun; async AGE sync after run |
+| Discovery — Plugin loader | ✅ Complete | ZERELIO_PLUGIN_DIR auto-discovery at startup |
+| Graph — Neighborhood query | ✅ Complete | Recursive CTE, works without AGE |
+| Graph — AGE sync | ✅ Complete | SyncResource/SyncBatch via Cypher MERGE |
+| Graph — Cypher endpoint | ✅ Complete | POST /api/v1/graph/cypher (raw AGE Cypher) |
 | DB — Initial schema migration | ✅ Complete | 001_initial_schema.up.sql |
+| DB — Graph extensions migration | ✅ Complete | 002_graph_extensions.up.sql (AGE + pgvector + FTS) |
 | Server entrypoint | ✅ Complete | Graceful shutdown, JWT key loading |
-| Docker Compose | ✅ Complete | postgres (AGE) + zerelio |
+| Docker Compose | ✅ Complete | Fixed paths; postgres (AGE) + zerelio |
 | Dockerfile | ✅ Complete | Distroless, CGO disabled |
 | GitHub Actions CI | ✅ Complete | test + lint + boundary check + integration tests |
 
@@ -41,28 +46,28 @@ Last updated: 2026-11-21 (Session 002)
 
 ```
 internal/auth       — 9 tests (password hashing, JWT, middleware)
-internal/api        — 6 tests (register, login, refresh, CRUD resources)
+internal/api        — 8 tests (register, login, refresh, CRUD, scope, neighborhood)
 internal/discovery  — 2 tests (run scope, unknown plugin)
 internal/storage    — integration tests (build tag: integration, needs Docker)
-Total: 17 unit tests, 0 races, all passing
+Total: 19 unit tests, 0 races, all passing
 ```
 
 ## What is NOT yet implemented
 
-### High priority (Milestone 0.2 remainder)
+### High priority (Milestone 0.3 remainder)
 
-- [ ] Discovery plugin migration — wire one plugin (e.g. aws) end-to-end against the platform
-- [ ] Discovery API: scope CRUD endpoint tests
-- [ ] Graph module (AGE Cypher query layer)
-- [ ] Search module (hybrid BM25 + pgvector + graph)
-- [ ] go.work sum file (`go work sync`)
+- [ ] Search module (hybrid BM25 + pgvector + graph proximity) — `GET /api/v1/search?q=...`
+- [ ] pgvector: vector column on resources table, embedding storage
+
+### Next milestone (0.4)
+
+- [ ] Docs/runbook generation module (LLM context assembly)
+- [ ] MCP server module — search_resources, get_resource, get_relationships, query_graph tools
 
 ### Medium priority
 
-- [ ] Docs/runbook generation module
-- [ ] MCP (Model Context Protocol) server module
-- [ ] Rate limiting middleware
-- [ ] Audit logging
+- [ ] Rate limiting middleware (token bucket per IP + per user)
+- [ ] Audit logging (`audit_events` table)
 - [ ] Pagination cursor (currently offset-based)
 
 ### Future (Zerelio Security)
@@ -74,5 +79,6 @@ Total: 17 unit tests, 0 races, all passing
 
 ## Known gaps
 
-1. Discovery plugins exist as standalone gRPC binaries (24 repos) but none are registered with the orchestrator. A scope run always fails "plugin not found".
-2. DiscoveryScope.CreatedAt/UpdatedAt are not read from DB (zero values in Go type). Low priority — data is persisted by Postgres default.
+1. Discovery plugins exist as standalone gRPC binaries (24 repos); end-to-end subprocess run untested (requires ZERELIO_PLUGIN_DIR + a built binary).
+2. DiscoveryScope.CreatedAt/UpdatedAt: zero values in Go type (data persisted in DB, just not read back).
+3. AGE graph sync: tested structurally but not against a live AGE instance (integration tests pending).
