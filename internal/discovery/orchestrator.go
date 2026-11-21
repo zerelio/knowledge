@@ -8,6 +8,7 @@ import (
 	"time"
 
 	sdkplugin "github.com/zerelio/plugin-sdk/plugin"
+	"github.com/zerelio/zerelio/internal/embedding"
 	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/pkg/types"
@@ -20,7 +21,8 @@ type Orchestrator struct {
 	store            storage.Backend
 	manager          *sdkplugin.PluginManager
 	inProcessPlugins map[string]Plugin
-	graph            *graph.Graph // optional; nil when running without PostgreSQL
+	graph            *graph.Graph     // optional; nil when running without PostgreSQL
+	embedder         *embedding.Embedder // optional; nil when LLM not configured
 	logger           *slog.Logger
 	mu               sync.RWMutex
 }
@@ -37,6 +39,11 @@ func NewOrchestrator(store storage.Backend, logger *slog.Logger) *Orchestrator {
 // SetGraph attaches an optional graph module for post-run sync.
 func (o *Orchestrator) SetGraph(g *graph.Graph) {
 	o.graph = g
+}
+
+// SetEmbedder attaches an optional embedder for post-run embedding.
+func (o *Orchestrator) SetEmbedder(e *embedding.Embedder) {
+	o.embedder = e
 }
 
 // RegisterPlugin registers an in-process plugin (for testing or embedded use).
@@ -201,6 +208,12 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 		resources, _, _ := o.store.GetResources(ctx, storage.ResourceFilter{Limit: 10000})
 		rels, _ := o.store.GetRelationships(ctx, storage.RelationshipFilter{Limit: 100000})
 		go o.graph.SyncBatch(context.Background(), resources, rels)
+	}
+
+	// Embed newly discovered resources if embedder is configured.
+	if o.embedder != nil {
+		resources, _, _ := o.store.GetResources(ctx, storage.ResourceFilter{Limit: 500})
+		go o.embedder.EmbedResources(context.Background(), resources)
 	}
 
 	o.logger.Info("discovery run completed",

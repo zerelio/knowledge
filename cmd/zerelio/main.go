@@ -20,7 +20,10 @@ import (
 	"github.com/zerelio/zerelio/internal/api"
 	"github.com/zerelio/zerelio/internal/auth"
 	"github.com/zerelio/zerelio/internal/discovery"
+	"github.com/zerelio/zerelio/internal/docs"
+	"github.com/zerelio/zerelio/internal/embedding"
 	"github.com/zerelio/zerelio/internal/graph"
+	"github.com/zerelio/zerelio/internal/llm"
 	"github.com/zerelio/zerelio/internal/mcp"
 	"github.com/zerelio/zerelio/internal/ratelimit"
 	"github.com/zerelio/zerelio/internal/search"
@@ -83,6 +86,17 @@ func run(logger *slog.Logger) error {
 
 	var graphSvc *graph.Graph
 	var searchSvc *search.Searcher
+	var embedSvc *embedding.Embedder
+	var docGen *docs.Generator
+
+	// LLM provider — configured from env, noop if not set.
+	llmProvider := llm.NewFromEnv()
+	if !llm.IsNoop(llmProvider) {
+		logger.Info("LLM provider active", "provider", llmProvider.Name())
+	} else {
+		logger.Info("LLM provider not configured — AI features disabled (set ZERELIO_LLM_PROVIDER)")
+	}
+
 	if pgb, ok := backend.(*storage.PGBackend); ok {
 		graphSvc = graph.New(pgb.Pool(), logger)
 		if err := graphSvc.Setup(ctx); err != nil {
@@ -92,6 +106,10 @@ func run(logger *slog.Logger) error {
 			orch.SetGraph(graphSvc)
 		}
 		searchSvc = search.New(pgb.Pool(), logger)
+		searchSvc.SetLLM(llmProvider)
+		embedSvc = embedding.New(llmProvider, pgb.Pool(), logger)
+		docGen = docs.New(llmProvider, backend, graphSvc)
+		orch.SetEmbedder(embedSvc)
 	}
 
 	handler := api.NewHandler(backend, jwtSvc, orch, logger)
@@ -100,6 +118,9 @@ func run(logger *slog.Logger) error {
 	}
 	if searchSvc != nil {
 		handler.SetSearcher(searchSvc)
+	}
+	if docGen != nil {
+		handler.SetDocGenerator(docGen)
 	}
 	mcpServer := mcp.NewServer(backend, logger)
 	if graphSvc != nil {
@@ -155,6 +176,9 @@ func run(logger *slog.Logger) error {
 		r.Get("/graph/neighborhood/{id}", handler.HandleNeighborhood)
 		r.Post("/graph/cypher", handler.HandleCypher)
 
+		r.Get("/docs/{id}", handler.HandleGenerateDoc)
+		r.Post("/runbooks", handler.HandleGenerateRunbook)
+
 		r.Get("/discovery/scopes", handler.HandleListScopes)
 		r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
 		r.Get("/discovery/plugins", handler.HandleListPlugins)
@@ -182,6 +206,11 @@ func run(logger *slog.Logger) error {
 				logger.Error("mcp stdio error", "error", err)
 			}
 		}()
+	}
+
+	// Background embedding sweep — catches resources not embedded after discovery.
+	if embedSvc != nil {
+		go embedSvc.RunBackground(ctx, 15*time.Minute)
 	}
 
 	// MCP HTTP+SSE transport — for web chat integrations.

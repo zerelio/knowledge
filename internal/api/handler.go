@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/zerelio/zerelio/internal/auth"
 	"github.com/zerelio/zerelio/internal/discovery"
+	"github.com/zerelio/zerelio/internal/docs"
 	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/search"
 	"github.com/zerelio/zerelio/internal/storage"
@@ -21,8 +22,9 @@ type Handler struct {
 	store    storage.Backend
 	jwt      *auth.JWTService
 	orch     *discovery.Orchestrator
-	graph    *graph.Graph    // optional; nil when no PG backend
+	graph    *graph.Graph     // optional; nil when no PG backend
 	searcher *search.Searcher // optional; nil when no PG backend
+	docGen   *docs.Generator  // optional; nil when LLM not configured
 	logger   *slog.Logger
 }
 
@@ -43,6 +45,11 @@ func (h *Handler) SetGraph(g *graph.Graph) {
 // SetSearcher attaches the search module to the handler.
 func (h *Handler) SetSearcher(s *search.Searcher) {
 	h.searcher = s
+}
+
+// SetDocGenerator attaches the doc generation module.
+func (h *Handler) SetDocGenerator(g *docs.Generator) {
+	h.docGen = g
 }
 
 func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -359,6 +366,52 @@ func containsRole(roles []string, role string) bool {
 		}
 	}
 	return false
+}
+
+// ---- Docs + runbook handlers ----
+
+// HandleGenerateDoc generates an LLM-powered dossier for a resource.
+// GET /api/v1/docs/{id}
+func (h *Handler) HandleGenerateDoc(w http.ResponseWriter, r *http.Request) {
+	if h.docGen == nil {
+		writeError(w, http.StatusServiceUnavailable,
+			"documentation generation requires an LLM provider (set ZERELIO_LLM_PROVIDER)")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	doc, err := h.docGen.GenerateResourceDoc(r.Context(), id)
+	if err != nil {
+		h.logger.Error("generate doc", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "doc generation failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, doc)
+}
+
+// HandleGenerateRunbook generates an LLM-powered runbook for a scenario.
+// POST /api/v1/runbooks
+// Body: {"scenario": "...", "resource_ids": ["res_001", ...]}
+func (h *Handler) HandleGenerateRunbook(w http.ResponseWriter, r *http.Request) {
+	if h.docGen == nil {
+		writeError(w, http.StatusServiceUnavailable,
+			"runbook generation requires an LLM provider (set ZERELIO_LLM_PROVIDER)")
+		return
+	}
+	var req struct {
+		Scenario    string   `json:"scenario"`
+		ResourceIDs []string `json:"resource_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Scenario == "" {
+		writeError(w, http.StatusBadRequest, "scenario required")
+		return
+	}
+	rb, err := h.docGen.GenerateRunbook(r.Context(), req.Scenario, req.ResourceIDs)
+	if err != nil {
+		h.logger.Error("generate runbook", "scenario", req.Scenario, "error", err)
+		writeError(w, http.StatusInternalServerError, "runbook generation failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, rb)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
