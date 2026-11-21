@@ -4,8 +4,8 @@
 replicaCount: 1
 
 image:
-  repository: zerelio/zerelio
-  tag: latest
+  repository: ghcr.io/zerelio/zerelio
+  tag: ""  # defaults to .Chart.AppVersion (0.1.0)
   pullPolicy: IfNotPresent
 
 service:
