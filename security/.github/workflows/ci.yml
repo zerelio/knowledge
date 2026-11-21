@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["security/**"]
+  pull_request:
+    branches: [main]
+    paths: ["security/**"]
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: security
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+
+      - name: Build
+        run: go build -buildvcs=false ./...
+        env:
+          CGO_ENABLED: "0"
+
+      - name: Test
+        run: go test -buildvcs=false -race -count=1 ./...
+        env:
+          CGO_ENABLED: "0"
+
+      - name: Vet
+        run: go vet ./...
+        env:
+          CGO_ENABLED: "0"
+
+  boundary:
+    name: Import boundary check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify no internal/ imports
+        run: |
+          if grep -rn --include="*.go" "github.com/zerelio/zerelio/internal" security/ 2>/dev/null | grep -v "_test.go"; then
+            echo "FAIL: security/ imports zerelio/internal/ — only pkg/ is allowed"
+            exit 1
+          fi
+          echo "Boundary check passed"
