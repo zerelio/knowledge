@@ -104,7 +104,7 @@ func (t *HTTPTransport) handleSSE(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(msg))
+			fmt.Fprintf(w, "event: message\ndata: %s\n\n", string(msg)) //nolint:gosec // msg is server-generated JSON, not user input
 			flusher.Flush()
 		}
 	}

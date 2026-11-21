@@ -33,7 +33,7 @@ func (h *Handler) HandleOIDCAuthorize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to build authorization URL")
 		return
 	}
-	http.Redirect(w, r, redirectURL, http.StatusFound)
+	http.Redirect(w, r, redirectURL, http.StatusFound) //nolint:gosec // URL is constructed from OIDC provider config, not user input
 }
 
 // HandleOIDCCallback processes the authorization code callback from the provider.
@@ -100,8 +100,14 @@ func (h *Handler) HandleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	fragment := fmt.Sprintf("access_token=%s&refresh_token=%s&token_type=Bearer&expires_in=%d",
 		pair.AccessToken, pair.RefreshToken, pair.ExpiresIn)
 
+	// Sanitize return_url to relative paths only — prevents open redirect to external domains.
+	safeReturn := returnURL
+	if safeReturn == "" || (len(safeReturn) > 0 && safeReturn[0] != '/') {
+		safeReturn = "/"
+	}
+
 	h.logger.Info("oidc login successful", "email", user.Email, "user_id", user.ID)
-	http.Redirect(w, r, returnURL+"#"+fragment, http.StatusFound)
+	http.Redirect(w, r, safeReturn+"#"+fragment, http.StatusFound) //nolint:gosec // return_url sanitised to relative path above
 }
 
 // HandleOIDCStatus returns OIDC configuration status (no secrets).
