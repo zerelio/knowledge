@@ -859,3 +859,65 @@ func (h *Handler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, pair)
 }
+
+// ---- Webhook handlers ----
+
+// HandleCreateWebhook creates a new webhook subscription.
+// POST /api/v1/webhooks
+func (h *Handler) HandleCreateWebhook(w http.ResponseWriter, r *http.Request) {
+	var req types.WebhookSubscription
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.URL == "" || req.Secret == "" {
+		writeError(w, http.StatusBadRequest, "url and secret are required")
+		return
+	}
+
+	claims := auth.ClaimsFromContext(r.Context())
+	req.ID = fmt.Sprintf("wh_%d", time.Now().UnixNano())
+	req.TenantID = claims.TenantID
+	req.Active = true
+	req.CreatedAt = time.Now()
+
+	if err := h.store.CreateWebhook(r.Context(), &req); err != nil {
+		h.logger.Error("create webhook", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create webhook")
+		return
+	}
+
+	// Return without the secret.
+	resp := req
+	resp.Secret = ""
+	writeJSON(w, http.StatusCreated, &resp)
+}
+
+// HandleListWebhooks lists webhook subscriptions for the current tenant.
+// GET /api/v1/webhooks
+func (h *Handler) HandleListWebhooks(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	subs, err := h.store.ListWebhooks(r.Context(), claims.TenantID)
+	if err != nil {
+		h.logger.Error("list webhooks", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list webhooks")
+		return
+	}
+	// Omit secrets from the response.
+	for _, s := range subs {
+		s.Secret = ""
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"webhooks": subs})
+}
+
+// HandleDeleteWebhook deletes a webhook subscription.
+// DELETE /api/v1/webhooks/{id}
+func (h *Handler) HandleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.store.DeleteWebhook(r.Context(), id); err != nil {
+		h.logger.Error("delete webhook", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to delete webhook")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

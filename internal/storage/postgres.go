@@ -173,6 +173,19 @@ func (p *PGBackend) GetResources(ctx context.Context, f ResourceFilter) ([]*type
 		return nil, 0, fmt.Errorf("count resources: %w", err)
 	}
 
+	// Cursor-based keyset condition — appended after the count so total reflects
+	// the full base filter, not the cursor window.
+	if f.AfterDiscoveredAt != nil {
+		cursorCond := fmt.Sprintf("(discovered_at < $%d OR (discovered_at = $%d AND id < $%d))", i, i, i+1)
+		if where == "" {
+			where = "WHERE " + cursorCond
+		} else {
+			where += " AND " + cursorCond
+		}
+		args = append(args, f.AfterDiscoveredAt, f.AfterID)
+		i += 2
+	}
+
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
@@ -183,7 +196,7 @@ func (p *PGBackend) GetResources(ctx context.Context, f ResourceFilter) ([]*type
 		SELECT id, tenant_id, name, type, provider, region, account_id,
 		       tags, properties, raw_data, discovered_at, valid_from, valid_to
 		FROM resources %s
-		ORDER BY discovered_at DESC
+		ORDER BY discovered_at DESC, id DESC
 		LIMIT $%d OFFSET $%d`, where, i, i+1)
 
 	rows, err := p.pool.Query(ctx, query, args...)

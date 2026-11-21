@@ -23,10 +23,12 @@ import (
 	"github.com/zerelio/zerelio/internal/discovery"
 	"github.com/zerelio/zerelio/internal/docs"
 	"github.com/zerelio/zerelio/internal/embedding"
+	"github.com/zerelio/zerelio/internal/events"
 	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/llm"
 	"github.com/zerelio/zerelio/internal/mcp"
 	"github.com/zerelio/zerelio/internal/ratelimit"
+	"github.com/zerelio/zerelio/internal/scheduler"
 	"github.com/zerelio/zerelio/internal/search"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/internal/telemetry"
@@ -95,6 +97,9 @@ func run(logger *slog.Logger) error {
 	detector := change.New(backend, logger)
 	orch.SetDetector(detector)
 
+	bus := events.New(backend, logger)
+	orch.SetEventBus(bus)
+
 	var graphSvc *graph.Graph
 	var searchSvc *search.Searcher
 	var embedSvc *embedding.Embedder
@@ -124,6 +129,14 @@ func run(logger *slog.Logger) error {
 		orch.SetEmbedder(embedSvc)
 	}
 
+	// Discovery scheduler — starts cron-based automatic scope runs.
+	sched := scheduler.New(backend, &orchestratorRunner{orch}, logger)
+	if os.Getenv("ZERELIO_SCHEDULER_ENABLED") == "true" {
+		go sched.Start(ctx)
+	} else {
+		logger.Info("scheduler disabled — set ZERELIO_SCHEDULER_ENABLED=true to enable")
+	}
+
 	handler := api.NewHandler(backend, jwtSvc, orch, logger)
 	if graphSvc != nil {
 		handler.SetGraph(graphSvc)
@@ -134,6 +147,7 @@ func run(logger *slog.Logger) error {
 	if docGen != nil {
 		handler.SetDocGenerator(docGen)
 	}
+	handler.SetEventBus(bus)
 	mcpServer := mcp.NewServer(backend, logger)
 	if graphSvc != nil {
 		mcpServer.SetGraph(graphSvc)
@@ -211,6 +225,9 @@ func run(logger *slog.Logger) error {
 			r.Patch("/discovery/scopes/{id}", handler.HandleUpdateScope)
 			r.Delete("/discovery/scopes/{id}", handler.HandleDeleteScope)
 			r.Post("/discovery/scopes/{id}/run", handler.HandleRunScope)
+			r.Get("/webhooks", handler.HandleListWebhooks)
+			r.Post("/webhooks", handler.HandleCreateWebhook)
+			r.Delete("/webhooks/{id}", handler.HandleDeleteWebhook)
 		})
 
 		r.Group(func(r chi.Router) {
@@ -355,6 +372,15 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// orchestratorRunner adapts *discovery.Orchestrator to scheduler.ScopeRunner.
+// The scheduler interface returns only error; the orchestrator returns a run record too.
+type orchestratorRunner struct{ o *discovery.Orchestrator }
+
+func (r *orchestratorRunner) RunScope(ctx context.Context, scopeID string) error {
+	_, err := r.o.RunScope(ctx, scopeID)
+	return err
 }
 
 // loadPlugins reads ZERELIO_PLUGIN_DIR and registers every executable it finds

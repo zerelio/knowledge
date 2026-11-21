@@ -358,3 +358,189 @@ func TestHandleSearch(t *testing.T) {
 		t.Errorf("expected 1 k8s result, got %d", len(results2))
 	}
 }
+
+func TestHandleGetScope(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create a scope.
+	payload := map[string]any{
+		"name":        "test-scope",
+		"plugin_name": "aws",
+		"status":      "active",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/discovery/scopes", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleCreateScope)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create scope: got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]any
+	json.NewDecoder(rec.Body).Decode(&created) //nolint:errcheck
+	scopeID, _ := created["id"].(string)
+
+	// Set up chi router so URLParam works.
+	r := chi.NewRouter()
+	r.Get("/discovery/scopes/{id}", injectClaims(http.HandlerFunc(h.HandleGetScope)).ServeHTTP)
+
+	// Get by ID — 200.
+	req = httptest.NewRequest(http.MethodGet, "/discovery/scopes/"+scopeID, nil)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get scope: got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	json.NewDecoder(rec.Body).Decode(&got) //nolint:errcheck
+	if got["id"] != scopeID {
+		t.Errorf("scope id = %q, want %q", got["id"], scopeID)
+	}
+
+	// Get missing ID — 404.
+	req = httptest.NewRequest(http.MethodGet, "/discovery/scopes/nonexistent_id", nil)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("get missing scope: got %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleUpdateScope(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create a scope.
+	payload := map[string]any{
+		"name":        "update-me",
+		"plugin_name": "aws",
+		"status":      "active",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/discovery/scopes", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleCreateScope)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create scope: got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]any
+	json.NewDecoder(rec.Body).Decode(&created) //nolint:errcheck
+	scopeID, _ := created["id"].(string)
+
+	// Set up chi router.
+	r := chi.NewRouter()
+	r.Patch("/discovery/scopes/{id}", injectClaims(http.HandlerFunc(h.HandleUpdateScope)).ServeHTTP)
+
+	// Patch schedule.
+	schedule := "0 * * * *"
+	patchBody, _ := json.Marshal(map[string]string{"schedule": schedule})
+	req = httptest.NewRequest(http.MethodPatch, "/discovery/scopes/"+scopeID, bytes.NewBuffer(patchBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update scope: got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var updated map[string]any
+	json.NewDecoder(rec.Body).Decode(&updated) //nolint:errcheck
+	if updated["schedule"] != schedule {
+		t.Errorf("schedule = %q, want %q", updated["schedule"], schedule)
+	}
+}
+
+func TestHandleDeleteScope(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create a scope.
+	payload := map[string]any{
+		"name":        "delete-me",
+		"plugin_name": "aws",
+		"status":      "active",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/discovery/scopes", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleCreateScope)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create scope: got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]any
+	json.NewDecoder(rec.Body).Decode(&created) //nolint:errcheck
+	scopeID, _ := created["id"].(string)
+
+	// Set up chi router.
+	r := chi.NewRouter()
+	r.Delete("/discovery/scopes/{id}", injectClaims(http.HandlerFunc(h.HandleDeleteScope)).ServeHTTP)
+	r.Get("/discovery/scopes/{id}", injectClaims(http.HandlerFunc(h.HandleGetScope)).ServeHTTP)
+
+	// Delete — 204.
+	req = httptest.NewRequest(http.MethodDelete, "/discovery/scopes/"+scopeID, nil)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete scope: got %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	// Get after delete — 404.
+	req = httptest.NewRequest(http.MethodGet, "/discovery/scopes/"+scopeID, nil)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("get deleted scope: got %d, want 404", rec.Code)
+	}
+}
+
+func TestHandleListResourcesCursor(t *testing.T) {
+	h := newTestHandler(t)
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	resources := []*types.Resource{
+		{ID: "rc1", Name: "res-1", Type: "aws:ec2", Provider: "aws", TenantID: "tenant_test", DiscoveredAt: now.Add(-2 * time.Second), ValidFrom: now},
+		{ID: "rc2", Name: "res-2", Type: "aws:ec2", Provider: "aws", TenantID: "tenant_test", DiscoveredAt: now.Add(-1 * time.Second), ValidFrom: now},
+		{ID: "rc3", Name: "res-3", Type: "aws:ec2", Provider: "aws", TenantID: "tenant_test", DiscoveredAt: now, ValidFrom: now},
+	}
+	h.store.StoreResources(context.Background(), resources) //nolint:errcheck
+
+	// Page 1: limit=2 → should return 2 resources and a next_cursor.
+	req := httptest.NewRequest(http.MethodGet, "/resources?limit=2", nil)
+	rec := httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleListResources)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page1 status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var page1 map[string]any
+	json.NewDecoder(rec.Body).Decode(&page1) //nolint:errcheck
+	res1, _ := page1["resources"].([]any)
+	if len(res1) != 2 {
+		t.Fatalf("page1: expected 2 resources, got %d", len(res1))
+	}
+	cursor, _ := page1["next_cursor"].(string)
+	if cursor == "" {
+		t.Fatal("page1: expected next_cursor, got empty string")
+	}
+	if hasMore, _ := page1["has_more"].(bool); !hasMore {
+		t.Error("page1: expected has_more=true")
+	}
+
+	// Page 2: use cursor → should return 1 resource and no next_cursor.
+	req = httptest.NewRequest(http.MethodGet, "/resources?limit=2&cursor="+cursor, nil)
+	rec = httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleListResources)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page2 status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var page2 map[string]any
+	json.NewDecoder(rec.Body).Decode(&page2) //nolint:errcheck
+	res2, _ := page2["resources"].([]any)
+	if len(res2) != 1 {
+		t.Fatalf("page2: expected 1 resource, got %d", len(res2))
+	}
+	cursor2, _ := page2["next_cursor"].(string)
+	if cursor2 != "" {
+		t.Errorf("page2: expected empty next_cursor, got %q", cursor2)
+	}
+	if hasMore2, _ := page2["has_more"].(bool); hasMore2 {
+		t.Error("page2: expected has_more=false")
+	}
+}
