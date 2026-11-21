@@ -54,7 +54,7 @@ Steps:
 ## Compile check
 
 ```bash
-cd /Users/simonbalazs/Desktop/GIT/zerelio/knowledge
+cd knowledge
 GOWORK=off go test -buildvcs=false -race -count=1 ./...
 ```
 
