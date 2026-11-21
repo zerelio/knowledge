@@ -43,7 +43,7 @@ jobs:
         run: go test -buildvcs=false -tags=integration -race -count=1 -timeout 300s ./internal/storage/
         env:
           ZERELIO_INTEGRATION: "1"
-          CGO_ENABLED: "0"
+          # CGO_ENABLED defaults to 1 — race detector requires it.
 
       - name: Vet
         run: go vet ./...
