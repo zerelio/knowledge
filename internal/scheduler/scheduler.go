@@ -62,6 +62,13 @@ func (s *Scheduler) Reload(ctx context.Context) {
 	s.logger.Info("discovery scheduler reloaded")
 }
 
+// IsRunning returns true once Start has been called and the cron has at least one entry.
+func (s *Scheduler) IsRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.c != nil && len(s.c.Entries()) > 0
+}
+
 // rebuild creates a fresh cron instance, registers all scheduled scopes, and
 // starts the engine. Any previously running cron is stopped first.
 func (s *Scheduler) rebuild(ctx context.Context) {

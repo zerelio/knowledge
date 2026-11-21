@@ -100,4 +100,9 @@ type Backend interface {
 	ListWebhooks(ctx context.Context, tenantID string) ([]*types.WebhookSubscription, error)
 	DeleteWebhook(ctx context.Context, id string) error
 	ListWebhooksForEvent(ctx context.Context, tenantID string, eventType types.EventType) ([]*types.WebhookSubscription, error)
+
+	// Compliance findings
+	StoreFinding(ctx context.Context, f *types.ComplianceFinding) error
+	ListFindings(ctx context.Context, tenantID, scopeID string, severity types.FindingSeverity, status types.FindingStatus, limit int) ([]*types.ComplianceFinding, error)
+	UpdateFindingStatus(ctx context.Context, id string, status types.FindingStatus) error
 }

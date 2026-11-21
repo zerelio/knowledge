@@ -31,6 +31,7 @@ type Handler struct {
 	bus      *events.Bus           // optional
 	oidc     *oidcauth.Provider    // optional
 	oidcCfg  *oidcauth.Config      // optional
+	scheduler interface{ IsRunning() bool } // optional — for health check
 	logger   *slog.Logger
 }
 
@@ -62,6 +63,12 @@ func (h *Handler) SetDocGenerator(g *docs.Generator) {
 func (h *Handler) SetOIDC(p *oidcauth.Provider, cfg *oidcauth.Config) {
 	h.oidc = p
 	h.oidcCfg = cfg
+}
+
+// SetScheduler attaches the scheduler reference for health reporting.
+// The scheduler is expected to implement IsRunning() bool.
+func (h *Handler) SetScheduler(s interface{ IsRunning() bool }) {
+	h.scheduler = s
 }
 
 // SetEventBus attaches the event bus to the handler.
@@ -485,6 +492,23 @@ func (h *Handler) HandleRunScope(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 	scopeID := chi.URLParam(r, "id")
 	runs, err := h.store.ListRuns(r.Context(), scopeID, 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list runs")
+		return
+	}
+	writeJSON(w, http.StatusOK, runs)
+}
+
+// HandleListAllRuns returns recent discovery runs across all scopes.
+// GET /api/v1/discovery/runs?limit=50
+func (h *Handler) HandleListAllRuns(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+	runs, err := h.store.ListRuns(r.Context(), "", limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list runs")
 		return

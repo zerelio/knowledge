@@ -9,6 +9,7 @@ import (
 
 	sdkplugin "github.com/zerelio/plugin-sdk/plugin"
 	"github.com/zerelio/zerelio/internal/change"
+	"github.com/zerelio/zerelio/internal/compliance"
 	"github.com/zerelio/zerelio/internal/embedding"
 	"github.com/zerelio/zerelio/internal/events"
 	"github.com/zerelio/zerelio/internal/graph"
@@ -269,6 +270,34 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 	if err := o.store.UpdateScope(ctx, scope); err != nil {
 		o.logger.Error("failed to update scope after run", "scope_id", scope.ID, "error", err)
 	}
+
+	// Post-discovery compliance evaluation — non-blocking best-effort.
+	go func() {
+		evalCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		resources, _, err := o.store.GetResources(evalCtx, storage.ResourceFilter{
+			TenantID: scope.TenantID,
+			Limit:    5000,
+		})
+		if err != nil {
+			o.logger.Warn("compliance: failed to load resources", "scope_id", scope.ID, "error", err)
+			return
+		}
+		eval := compliance.NewEvaluator()
+		findings := eval.EvaluateAll(resources)
+		for _, f := range findings {
+			f.ScopeID = scope.ID
+			f.ID = fmt.Sprintf("fnd_%s_%s", f.ResourceID, f.RuleID)
+			if storeErr := o.store.StoreFinding(evalCtx, f); storeErr != nil {
+				o.logger.Warn("compliance: failed to store finding", "finding_id", f.ID, "error", storeErr)
+			}
+		}
+		o.logger.Info("compliance evaluation complete",
+			"scope_id", scope.ID,
+			"resources", len(resources),
+			"findings", len(findings),
+		)
+	}()
 
 	// Sync to AGE graph if available.
 	if o.graph != nil {

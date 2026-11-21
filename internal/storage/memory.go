@@ -26,6 +26,7 @@ type MemoryBackend struct {
 	config          map[string]string
 	changes         []*types.ResourceChange
 	webhooks        map[string]*types.WebhookSubscription
+	findings        []*types.ComplianceFinding
 }
 
 func NewMemoryBackend() *MemoryBackend {
@@ -673,4 +674,57 @@ func (m *MemoryBackend) ListWebhooksForEvent(_ context.Context, tenantID string,
 		}
 	}
 	return result, nil
+}
+func (m *MemoryBackend) StoreFinding(_ context.Context, f *types.ComplianceFinding) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Replace existing finding with same ID.
+	for i, existing := range m.findings {
+		if existing.ID == f.ID {
+			cp := *f
+			m.findings[i] = &cp
+			return nil
+		}
+	}
+	cp := *f
+	m.findings = append(m.findings, &cp)
+	return nil
+}
+
+func (m *MemoryBackend) ListFindings(_ context.Context, tenantID, scopeID string, severity types.FindingSeverity, status types.FindingStatus, limit int) ([]*types.ComplianceFinding, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []*types.ComplianceFinding
+	for _, f := range m.findings {
+		if tenantID != "" && f.TenantID != tenantID {
+			continue
+		}
+		if scopeID != "" && f.ScopeID != scopeID {
+			continue
+		}
+		if severity != "" && f.Severity != severity {
+			continue
+		}
+		if status != "" && f.Status != status {
+			continue
+		}
+		cp := *f
+		result = append(result, &cp)
+	}
+	if limit > 0 && len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func (m *MemoryBackend) UpdateFindingStatus(_ context.Context, id string, status types.FindingStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, f := range m.findings {
+		if f.ID == id {
+			f.Status = status
+			return nil
+		}
+	}
+	return fmt.Errorf("finding %q not found", id)
 }

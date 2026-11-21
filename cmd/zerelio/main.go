@@ -204,6 +204,8 @@ func run(logger *slog.Logger) error {
 		r.Get("/auth/oidc/status", handler.HandleOIDCStatus)
 		r.Get("/auth/oidc/authorize", handler.HandleOIDCAuthorize)
 		r.Get("/auth/oidc/callback", handler.HandleOIDCCallback)
+		// Health — unauthenticated (used by LBs + console dashboard).
+		r.Get("/health", handler.HandleHealth)
 
 		if authDisabled {
 			r.Use(func(next http.Handler) http.Handler {
@@ -237,8 +239,11 @@ func run(logger *slog.Logger) error {
 		r.Get("/discovery/scopes", handler.HandleListScopes)
 		r.Get("/discovery/scopes/{id}", handler.HandleGetScope)
 		r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
-			r.Get("/discovery/runs/{runID}", handler.HandleGetRun)
-		r.Get("/discovery/scopes/{id}/changes", handler.HandleListChanges)
+			r.Get("/discovery/runs", handler.HandleListAllRuns)
+				r.Get("/discovery/runs/{runID}", handler.HandleGetRun)
+		r.Get("/compliance/findings", handler.HandleListFindings)
+			r.Patch("/compliance/findings/{id}", handler.HandleUpdateFindingStatus)
+			r.Get("/discovery/scopes/{id}/changes", handler.HandleListChanges)
 		r.Get("/discovery/plugins", handler.HandleListPlugins)
 
 		r.Group(func(r chi.Router) {

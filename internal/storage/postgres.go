@@ -709,3 +709,64 @@ func (p *PGBackend) ListAuditEvents(ctx context.Context, tenantID string, limit 
 	}
 	return results, rows.Err()
 }
+
+func (p *PGBackend) StoreFinding(ctx context.Context, f *types.ComplianceFinding) error {
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO compliance_findings
+		  (id, resource_id, tenant_id, scope_id, rule_id, rule_name, severity, message, remediation, status, evaluated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		ON CONFLICT (id) DO UPDATE SET
+		  severity=EXCLUDED.severity, message=EXCLUDED.message,
+		  remediation=EXCLUDED.remediation, evaluated_at=EXCLUDED.evaluated_at`,
+		f.ID, f.ResourceID, f.TenantID, f.ScopeID, f.RuleID, f.RuleName,
+		string(f.Severity), f.Message, f.Remediation, string(f.Status), f.EvaluatedAt,
+	)
+	return err
+}
+
+func (p *PGBackend) ListFindings(ctx context.Context, tenantID, scopeID string, severity types.FindingSeverity, status types.FindingStatus, limit int) ([]*types.ComplianceFinding, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	q := `SELECT id, resource_id, tenant_id, scope_id, rule_id, rule_name,
+	            severity, message, remediation, status, evaluated_at
+	      FROM compliance_findings WHERE tenant_id=$1`
+	args := []any{tenantID}
+	i := 2
+	if scopeID != "" {
+		q += fmt.Sprintf(" AND scope_id=$%d", i); args = append(args, scopeID); i++
+	}
+	if severity != "" {
+		q += fmt.Sprintf(" AND severity=$%d", i); args = append(args, string(severity)); i++
+	}
+	if status != "" {
+		q += fmt.Sprintf(" AND status=$%d", i); args = append(args, string(status)); i++
+	}
+	q += fmt.Sprintf(" ORDER BY evaluated_at DESC LIMIT $%d", i)
+	args = append(args, limit)
+
+	rows, err := p.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var findings []*types.ComplianceFinding
+	for rows.Next() {
+		f := &types.ComplianceFinding{}
+		var sev, stat string
+		if err := rows.Scan(&f.ID, &f.ResourceID, &f.TenantID, &f.ScopeID, &f.RuleID, &f.RuleName,
+			&sev, &f.Message, &f.Remediation, &stat, &f.EvaluatedAt); err != nil {
+			return nil, err
+		}
+		f.Severity = types.FindingSeverity(sev)
+		f.Status = types.FindingStatus(stat)
+		findings = append(findings, f)
+	}
+	return findings, rows.Err()
+}
+
+func (p *PGBackend) UpdateFindingStatus(ctx context.Context, id string, status types.FindingStatus) error {
+	_, err := p.pool.Exec(ctx, `UPDATE compliance_findings SET status=$1 WHERE id=$2`, string(status), id)
+	return err
+}
