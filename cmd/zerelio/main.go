@@ -81,6 +81,13 @@ func run(logger *slog.Logger) error {
 	}
 	defer backend.Close()
 
+	// Run schema migrations automatically on startup (idempotent).
+	if pgb, ok := backend.(*storage.PGBackend); ok {
+		if err := storage.Migrate(ctx, pgb, logger); err != nil {
+			return fmt.Errorf("schema migration: %w", err)
+		}
+	}
+
 	orch := discovery.NewOrchestrator(backend, logger)
 	loadPlugins(orch, logger)
 
