@@ -11,6 +11,22 @@ import (
 	"github.com/zerelio/zerelio/pkg/types"
 )
 
+// HandleListKnowledgeSummaries returns pre-computed community-level summaries.
+// GET /api/v1/knowledge/summaries?scope_id=...
+func (h *Handler) HandleListKnowledgeSummaries(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	scopeID := r.URL.Query().Get("scope_id")
+	summaries, err := h.store.ListKnowledgeSummaries(r.Context(), claims.TenantID, scopeID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list summaries")
+		return
+	}
+	if summaries == nil {
+		summaries = []*types.KnowledgeSummary{}
+	}
+	writeJSON(w, http.StatusOK, summaries)
+}
+
 // HandleListFindings returns compliance findings for the authenticated tenant.
 // GET /api/v1/compliance/findings?scope_id=...&severity=critical&status=open&limit=100
 func (h *Handler) HandleListFindings(w http.ResponseWriter, r *http.Request) {

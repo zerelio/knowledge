@@ -121,14 +121,21 @@ func (s *Searcher) Search(ctx context.Context, p Params) ([]Result, error) {
 		graphHits, _ = s.graphNeighbours(ctx, topID, 2)
 	}
 
-	// Fuse with RRF.
+	// Fuse with RRF — fetch more candidates when MMR re-ranking is on.
 	fused := rrf([][]scoredID{bm25Hits, vecHits, graphHits}, 60)
+	candidateLimit := p.Limit * 3
+	if candidateLimit > 60 {
+		candidateLimit = 60
+	}
+	if candidateLimit < p.Limit {
+		candidateLimit = p.Limit
+	}
 
-	// Fetch the top-N resources by ID.
-	topIDs := make([]string, 0, p.Limit)
-	scoreByID := make(map[string]float64, p.Limit)
+	// Collect candidate IDs for the expanded fetch.
+	topIDs := make([]string, 0, candidateLimit)
+	scoreByID := make(map[string]float64, candidateLimit)
 	for _, h := range fused {
-		if len(topIDs) >= p.Limit {
+		if len(topIDs) >= candidateLimit {
 			break
 		}
 		topIDs = append(topIDs, h.id)
@@ -184,6 +191,13 @@ func (s *Searcher) Search(ctx context.Context, p Params) ([]Result, error) {
 			Signals:  signals,
 		})
 	}
+
+	// MMR re-ranking: maximize relevance AND diversity.
+	// Only kicks in when we fetched more candidates than the requested limit.
+	if len(results) > p.Limit {
+		results = mmrRerank(results, p.Limit, 0.6)
+	}
+
 	return results, nil
 }
 

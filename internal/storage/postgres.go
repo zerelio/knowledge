@@ -770,3 +770,43 @@ func (p *PGBackend) UpdateFindingStatus(ctx context.Context, id string, status t
 	_, err := p.pool.Exec(ctx, `UPDATE compliance_findings SET status=$1 WHERE id=$2`, string(status), id)
 	return err
 }
+
+func (p *PGBackend) StoreKnowledgeSummary(ctx context.Context, s *types.KnowledgeSummary) error {
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO knowledge_summaries
+		  (id, scope_id, tenant_id, type_prefix, scope_name, summary, resource_count, generated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+		ON CONFLICT (scope_id, type_prefix) DO UPDATE SET
+		  summary=EXCLUDED.summary, resource_count=EXCLUDED.resource_count,
+		  generated_at=EXCLUDED.generated_at, scope_name=EXCLUDED.scope_name`,
+		s.ID, s.ScopeID, s.TenantID, s.TypePrefix, s.ScopeName, s.Summary, s.ResourceCount, s.GeneratedAt,
+	)
+	return err
+}
+
+func (p *PGBackend) ListKnowledgeSummaries(ctx context.Context, tenantID, scopeID string) ([]*types.KnowledgeSummary, error) {
+	q := `SELECT id, scope_id, tenant_id, type_prefix, scope_name, summary, resource_count, generated_at
+	      FROM knowledge_summaries WHERE tenant_id=$1`
+	args := []any{tenantID}
+	if scopeID != "" {
+		q += " AND scope_id=$2 ORDER BY type_prefix"
+		args = append(args, scopeID)
+	} else {
+		q += " ORDER BY generated_at DESC LIMIT 200"
+	}
+	rows, err := p.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []*types.KnowledgeSummary
+	for rows.Next() {
+		s := &types.KnowledgeSummary{}
+		if err := rows.Scan(&s.ID, &s.ScopeID, &s.TenantID, &s.TypePrefix, &s.ScopeName,
+			&s.Summary, &s.ResourceCount, &s.GeneratedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, s)
+	}
+	return result, rows.Err()
+}

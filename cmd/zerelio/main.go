@@ -25,6 +25,7 @@ import (
 	"github.com/zerelio/zerelio/internal/embedding"
 	"github.com/zerelio/zerelio/internal/events"
 	"github.com/zerelio/zerelio/internal/graph"
+	"github.com/zerelio/zerelio/internal/knowledge"
 	"github.com/zerelio/zerelio/internal/llm"
 	"github.com/zerelio/zerelio/internal/mcp"
 	"github.com/zerelio/zerelio/internal/oidcauth"
@@ -129,6 +130,10 @@ func run(logger *slog.Logger) error {
 	} else {
 		logger.Info("LLM provider not configured — AI features disabled (set ZERELIO_LLM_PROVIDER)")
 	}
+
+	// Knowledge summarizer — always created; LLM is optional (falls back to stats).
+	summarizer := knowledge.New(backend, llmProvider, logger)
+	orch.SetSummarizer(summarizer)
 
 	if pgb, ok := backend.(*storage.PGBackend); ok {
 		graphSvc = graph.New(pgb.Pool(), logger)
@@ -244,6 +249,7 @@ func run(logger *slog.Logger) error {
 		r.Get("/compliance/findings", handler.HandleListFindings)
 			r.Patch("/compliance/findings/{id}", handler.HandleUpdateFindingStatus)
 			r.Get("/discovery/scopes/{id}/changes", handler.HandleListChanges)
+			r.Get("/knowledge/summaries", handler.HandleListKnowledgeSummaries)
 		r.Get("/discovery/plugins", handler.HandleListPlugins)
 
 		r.Group(func(r chi.Router) {

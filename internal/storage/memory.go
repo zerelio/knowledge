@@ -27,6 +27,7 @@ type MemoryBackend struct {
 	changes         []*types.ResourceChange
 	webhooks        map[string]*types.WebhookSubscription
 	findings        []*types.ComplianceFinding
+	knowledgeSummaries map[string]*types.KnowledgeSummary
 }
 
 func NewMemoryBackend() *MemoryBackend {
@@ -727,4 +728,33 @@ func (m *MemoryBackend) UpdateFindingStatus(_ context.Context, id string, status
 		}
 	}
 	return fmt.Errorf("finding %q not found", id)
+}
+
+func (m *MemoryBackend) StoreKnowledgeSummary(_ context.Context, s *types.KnowledgeSummary) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// summaries field initialised lazily
+	if m.knowledgeSummaries == nil {
+		m.knowledgeSummaries = make(map[string]*types.KnowledgeSummary)
+	}
+	cp := *s
+	m.knowledgeSummaries[s.ID] = &cp
+	return nil
+}
+
+func (m *MemoryBackend) ListKnowledgeSummaries(_ context.Context, tenantID, scopeID string) ([]*types.KnowledgeSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []*types.KnowledgeSummary
+	for _, s := range m.knowledgeSummaries {
+		if tenantID != "" && s.TenantID != tenantID {
+			continue
+		}
+		if scopeID != "" && s.ScopeID != scopeID {
+			continue
+		}
+		cp := *s
+		result = append(result, &cp)
+	}
+	return result, nil
 }

@@ -105,4 +105,8 @@ type Backend interface {
 	StoreFinding(ctx context.Context, f *types.ComplianceFinding) error
 	ListFindings(ctx context.Context, tenantID, scopeID string, severity types.FindingSeverity, status types.FindingStatus, limit int) ([]*types.ComplianceFinding, error)
 	UpdateFindingStatus(ctx context.Context, id string, status types.FindingStatus) error
+
+	// Community-level knowledge summaries
+	StoreKnowledgeSummary(ctx context.Context, s *types.KnowledgeSummary) error
+	ListKnowledgeSummaries(ctx context.Context, tenantID, scopeID string) ([]*types.KnowledgeSummary, error)
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/zerelio/zerelio/internal/embedding"
 	"github.com/zerelio/zerelio/internal/events"
 	"github.com/zerelio/zerelio/internal/graph"
+	"github.com/zerelio/zerelio/internal/knowledge"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/pkg/types"
 )
@@ -24,10 +25,11 @@ type Orchestrator struct {
 	store            storage.Backend
 	manager          *sdkplugin.PluginManager
 	inProcessPlugins map[string]Plugin
-	graph            *graph.Graph        // optional; nil when running without PostgreSQL
-	embedder         *embedding.Embedder // optional; nil when LLM not configured
-	detector         *change.Detector    // optional; nil when change detection disabled
-	bus              *events.Bus         // optional; nil when event bus not configured
+	graph            *graph.Graph        // optional
+	embedder         *embedding.Embedder // optional
+	detector         *change.Detector    // optional
+	bus              *events.Bus         // optional
+	summarizer       *knowledge.Summarizer // optional
 	logger           *slog.Logger
 	mu               sync.RWMutex
 }
@@ -59,6 +61,11 @@ func (o *Orchestrator) SetDetector(d *change.Detector) {
 // SetEventBus attaches an optional event bus for emitting discovery events.
 func (o *Orchestrator) SetEventBus(b *events.Bus) {
 	o.bus = b
+}
+
+// SetSummarizer attaches an optional knowledge summarizer.
+func (o *Orchestrator) SetSummarizer(s *knowledge.Summarizer) {
+	o.summarizer = s
 }
 
 // RegisterPlugin registers an in-process plugin (for testing or embedded use).
@@ -297,6 +304,11 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 			"resources", len(resources),
 			"findings", len(findings),
 		)
+
+		// Community-level summarization — runs after compliance (sequential in this goroutine).
+		if o.summarizer != nil {
+			o.summarizer.SummarizeScope(evalCtx, scope.ID, scope.TenantID, scope.Name)
+		}
 	}()
 
 	// Sync to AGE graph if available.
