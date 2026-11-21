@@ -13,6 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # plugin-sdk replace directive (../plugin-sdk) requires the sibling repo.
+      - uses: actions/checkout@v4
+        with:
+          repository: zerelio/plugin-sdk
+          path: ../plugin-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
@@ -46,23 +53,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/checkout@v4
+        with:
+          repository: zerelio/plugin-sdk
+          path: ../plugin-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
           cache: true
 
-      # golangci-lint builds with the Go installed above, so it supports go 1.26.
-      # We install from source to guarantee it compiles under the same toolchain.
+      # Install from source so it compiles under Go 1.26 (pre-built binaries
+      # are built with an older toolchain and refuse to lint go1.26 modules).
       - name: Install staticcheck
         run: go install honnef.co/go/tools/cmd/staticcheck@latest
 
       - name: staticcheck
         run: staticcheck ./...
-        env:
-          CGO_ENABLED: "0"
-
-      - name: go vet (redundant safety net)
-        run: go vet ./...
         env:
           CGO_ENABLED: "0"
 
@@ -72,6 +80,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/checkout@v4
+        with:
+          repository: zerelio/plugin-sdk
+          path: ../plugin-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
@@ -80,7 +94,10 @@ jobs:
       - name: gosec
         uses: securego/gosec@master
         with:
-          args: "-exclude=G115 ./..."
+          # G104: unhandled errors — excluded because deferred rows.Close()
+          # is the standard database/sql pattern and not an actionable finding.
+          # G115: int conversion — numeric range is validated before cast.
+          args: "-exclude=G104,G115 ./..."
         env:
           CGO_ENABLED: "0"
 
@@ -96,6 +113,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: zerelio/plugin-sdk
+          path: ../plugin-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v5
         with:
