@@ -24,6 +24,10 @@ func NewPGBackend(dsn string) *PGBackend {
 	return &PGBackend{dsn: dsn}
 }
 
+func (p *PGBackend) Pool() *pgxpool.Pool {
+	return p.pool
+}
+
 func (p *PGBackend) Connect(ctx context.Context) error {
 	cfg, err := pgxpool.ParseConfig(p.dsn)
 	if err != nil {

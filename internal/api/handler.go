@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/zerelio/zerelio/internal/auth"
 	"github.com/zerelio/zerelio/internal/discovery"
+	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/pkg/types"
 )
@@ -18,6 +20,7 @@ type Handler struct {
 	store  storage.Backend
 	jwt    *auth.JWTService
 	orch   *discovery.Orchestrator
+	graph  *graph.Graph // optional; nil when no PG backend
 	logger *slog.Logger
 }
 
@@ -28,6 +31,11 @@ func NewHandler(store storage.Backend, jwt *auth.JWTService, orch *discovery.Orc
 		orch:   orch,
 		logger: logger,
 	}
+}
+
+// SetGraph attaches the graph module to the handler (called after setup in main).
+func (h *Handler) SetGraph(g *graph.Graph) {
+	h.graph = g
 }
 
 func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -324,6 +332,59 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// ---- Graph handlers ----
+
+// HandleNeighborhood returns all nodes and edges within N hops of a resource.
+// GET /api/v1/graph/neighborhood/{id}?hops=2
+func (h *Handler) HandleNeighborhood(w http.ResponseWriter, r *http.Request) {
+	if h.graph == nil {
+		writeError(w, http.StatusServiceUnavailable, "graph module not available (requires PostgreSQL backend)")
+		return
+	}
+	id := chi.URLParam(r, "id")
+	hops := 2
+	if s := r.URL.Query().Get("hops"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			hops = n
+		}
+	}
+
+	subgraph, err := h.graph.Neighborhood(r.Context(), id, hops)
+	if err != nil {
+		h.logger.Error("neighborhood query", "id", id, "error", err)
+		writeError(w, http.StatusInternalServerError, "graph query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, subgraph)
+}
+
+// HandleCypher executes a raw Cypher query against the AGE graph.
+// POST /api/v1/graph/cypher
+// Body: {"query": "MATCH (n:Resource) RETURN n", "return": ["n"]}
+func (h *Handler) HandleCypher(w http.ResponseWriter, r *http.Request) {
+	if h.graph == nil {
+		writeError(w, http.StatusServiceUnavailable, "graph module not available (requires PostgreSQL backend)")
+		return
+	}
+
+	var req struct {
+		Query      string   `json:"query"`
+		ReturnCols []string `json:"return"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Query == "" {
+		writeError(w, http.StatusBadRequest, "query required")
+		return
+	}
+
+	results, err := h.graph.Cypher(r.Context(), req.Query, req.ReturnCols)
+	if err != nil {
+		h.logger.Error("cypher query", "error", err)
+		writeError(w, http.StatusInternalServerError, "cypher query failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
 }
 
 // HandleRefresh validates a refresh token, revokes it, and issues a new token pair.

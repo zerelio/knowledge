@@ -14,7 +14,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./knowledge/db/migrations:/docker-entrypoint-initdb.d:ro
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U zerelio"]
       interval: 5s
@@ -23,7 +23,7 @@ services:
 
   zerelio:
     build:
-      context: ./knowledge
+      context: .
       dockerfile: Dockerfile
     depends_on:
       postgres:
@@ -31,7 +31,7 @@ services:
     environment:
       ZERELIO_AUTH_DISABLED: "true"
       ZERELIO_ADDR: ":8080"
-      ZERELIO_DATABASE_URL: "postgres://zerelio:zerelio_dev_only@postgres:5432/zerelio?sslmode=disable"
+      ZERELIO_POSTGRES_DSN: "postgres://zerelio:zerelio_dev_only@postgres:5432/zerelio?sslmode=disable"
     ports:
       - "8080:8080"
     restart: unless-stopped

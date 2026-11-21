@@ -8,6 +8,7 @@ import (
 	"time"
 
 	sdkplugin "github.com/zerelio/plugin-sdk/plugin"
+	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/pkg/types"
 )
@@ -16,11 +17,12 @@ import (
 // to the SDK's PluginManager and falls back to in-process plugins registered
 // directly (useful for tests and embedded mode).
 type Orchestrator struct {
-	store          storage.Backend
-	manager        *sdkplugin.PluginManager
+	store            storage.Backend
+	manager          *sdkplugin.PluginManager
 	inProcessPlugins map[string]Plugin
-	logger         *slog.Logger
-	mu             sync.RWMutex
+	graph            *graph.Graph // optional; nil when running without PostgreSQL
+	logger           *slog.Logger
+	mu               sync.RWMutex
 }
 
 func NewOrchestrator(store storage.Backend, logger *slog.Logger) *Orchestrator {
@@ -30,6 +32,11 @@ func NewOrchestrator(store storage.Backend, logger *slog.Logger) *Orchestrator {
 		inProcessPlugins: make(map[string]Plugin),
 		logger:           logger,
 	}
+}
+
+// SetGraph attaches an optional graph module for post-run sync.
+func (o *Orchestrator) SetGraph(g *graph.Graph) {
+	o.graph = g
 }
 
 // RegisterPlugin registers an in-process plugin (for testing or embedded use).
@@ -187,6 +194,13 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 	scope.ResourceCount = resourceCount
 	if err := o.store.UpdateScope(ctx, scope); err != nil {
 		o.logger.Error("failed to update scope after run", "scope_id", scope.ID, "error", err)
+	}
+
+	// Sync to AGE graph if available.
+	if o.graph != nil {
+		resources, _, _ := o.store.GetResources(ctx, storage.ResourceFilter{Limit: 10000})
+		rels, _ := o.store.GetRelationships(ctx, storage.RelationshipFilter{Limit: 100000})
+		go o.graph.SyncBatch(context.Background(), resources, rels)
 	}
 
 	o.logger.Info("discovery run completed",

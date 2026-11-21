@@ -254,3 +254,66 @@ func TestHandleRefresh(t *testing.T) {
 		t.Errorf("reuse of revoked token: got %d want 401", rec.Code)
 	}
 }
+
+func TestHandleScopeCRUD(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create a scope.
+	payload := map[string]any{
+		"name":        "prod-aws",
+		"plugin_name": "aws",
+		"config":      map[string]string{"region": "us-east-1"},
+		"status":      "active",
+	}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/discovery/scopes", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleCreateScope)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create scope: got %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]any
+	json.NewDecoder(rec.Body).Decode(&created) //nolint:errcheck
+	scopeID, _ := created["id"].(string)
+	if scopeID == "" {
+		t.Fatal("no id in create scope response")
+	}
+
+	// List scopes.
+	req = httptest.NewRequest(http.MethodGet, "/discovery/scopes", nil)
+	rec = httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleListScopes)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list scopes: got %d", rec.Code)
+	}
+	var listResp map[string]any
+	json.NewDecoder(rec.Body).Decode(&listResp) //nolint:errcheck
+	scopes, _ := listResp["scopes"].([]any)
+	if len(scopes) != 1 {
+		t.Errorf("expected 1 scope, got %d", len(scopes))
+	}
+
+	// Run scope — no plugin registered, expect 500 "plugin not found".
+	r := chi.NewRouter()
+	r.Post("/discovery/scopes/{id}/run", injectClaims(http.HandlerFunc(h.HandleRunScope)).ServeHTTP)
+	req = httptest.NewRequest(http.MethodPost, "/discovery/scopes/"+scopeID+"/run", nil)
+	rec = httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("run scope without plugin: expected 500, got %d; body: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleNeighborhoodNoGraph(t *testing.T) {
+	h := newTestHandler(t)
+	// graph is nil by default — should return 503
+	r := chi.NewRouter()
+	r.Get("/graph/neighborhood/{id}", injectClaims(http.HandlerFunc(h.HandleNeighborhood)).ServeHTTP)
+	req := httptest.NewRequest(http.MethodGet, "/graph/neighborhood/res_001", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected 503 without graph, got %d", rec.Code)
+	}
+}

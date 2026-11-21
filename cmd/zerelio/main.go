@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/zerelio/zerelio/internal/api"
 	"github.com/zerelio/zerelio/internal/auth"
 	"github.com/zerelio/zerelio/internal/discovery"
+	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/mcp"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/internal/telemetry"
@@ -57,7 +60,24 @@ func run(logger *slog.Logger) error {
 	defer backend.Close()
 
 	orch := discovery.NewOrchestrator(backend, logger)
+	loadPlugins(orch, logger)
+
+	// Set up graph module when backed by PostgreSQL.
+	var graphSvc *graph.Graph
+	if pgb, ok := backend.(*storage.PGBackend); ok {
+		graphSvc = graph.New(pgb.Pool(), logger)
+		if err := graphSvc.Setup(ctx); err != nil {
+			logger.Warn("AGE graph setup failed — graph features disabled", "error", err)
+			graphSvc = nil
+		} else {
+			orch.SetGraph(graphSvc)
+		}
+	}
+
 	handler := api.NewHandler(backend, jwtSvc, orch, logger)
+	if graphSvc != nil {
+		handler.SetGraph(graphSvc)
+	}
 	mcpServer := mcp.NewServer(backend, logger)
 
 	r := chi.NewRouter()
@@ -93,6 +113,8 @@ func run(logger *slog.Logger) error {
 		r.Get("/resources", handler.HandleListResources)
 		r.Get("/resources/{id}", handler.HandleGetResource)
 		r.Get("/graph/export", handler.HandleGraphExport)
+		r.Get("/graph/neighborhood/{id}", handler.HandleNeighborhood)
+		r.Post("/graph/cypher", handler.HandleCypher)
 
 		r.Get("/discovery/scopes", handler.HandleListScopes)
 		r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
@@ -241,4 +263,51 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// loadPlugins reads ZERELIO_PLUGIN_DIR and registers every executable it finds
+// with the orchestrator as a subprocess plugin.
+// Plugin names are derived from filenames: "plugin-aws" → "aws", "aws" → "aws".
+// Set ZERELIO_PLUGIN_DIR=/path/to/plugins to enable.
+func loadPlugins(orch *discovery.Orchestrator, logger *slog.Logger) {
+	dir := os.Getenv("ZERELIO_PLUGIN_DIR")
+	if dir == "" {
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		logger.Warn("cannot read ZERELIO_PLUGIN_DIR", "dir", dir, "error", err)
+		return
+	}
+
+	loaded := 0
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		// Skip non-executable files.
+		if info.Mode()&0o111 == 0 {
+			continue
+		}
+
+		path := filepath.Join(dir, e.Name())
+		name := strings.TrimPrefix(e.Name(), "plugin-")
+		name = strings.TrimSuffix(name, ".exe")
+
+		if err := orch.LoadSubprocessPlugin(name, path); err != nil {
+			logger.Error("failed to load plugin", "name", name, "path", path, "error", err)
+			continue
+		}
+		logger.Info("loaded plugin", "name", name, "path", path)
+		loaded++
+	}
+
+	if loaded > 0 {
+		logger.Info("plugin loader complete", "count", loaded, "dir", dir)
+	}
 }
