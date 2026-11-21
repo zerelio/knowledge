@@ -51,10 +51,20 @@ jobs:
           go-version: "1.26"
           cache: true
 
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+      # golangci-lint builds with the Go installed above, so it supports go 1.26.
+      # We install from source to guarantee it compiles under the same toolchain.
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@latest
+
+      - name: staticcheck
+        run: staticcheck ./...
+        env:
+          CGO_ENABLED: "0"
+
+      - name: go vet (redundant safety net)
+        run: go vet ./...
+        env:
+          CGO_ENABLED: "0"
 
   security:
     name: Security scan
@@ -90,6 +100,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+          cache: true
 
       - name: Install cyclonedx-gomod
         run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
@@ -111,14 +122,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Verify security/ does not import knowledge/internal/
+      - name: Verify security/ does not import zerelio/internal/
         shell: bash
         run: |
-          # security/ may only depend on public knowledge APIs — never internal/ packages.
-          # This check is a no-op until the security/ module exists.
           if [ -d "security" ]; then
             if grep -rn --include="*.go" "github.com/zerelio/zerelio/internal" security/ 2>/dev/null | grep -v "_test.go"; then
-              echo "ERROR: security/ imports knowledge/internal/ — only public APIs allowed"
+              echo "ERROR: security/ imports zerelio/internal/ — only public APIs allowed"
               exit 1
             fi
           fi
