@@ -1,0 +1,59 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+/zerelio
+/zerelio-server
+/zerelio-agent
+/tmp/
+
+# Go
+*.test
+*.out
+vendor/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+
+# Node
+node_modules/
+.next/
+out/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+*.pem
+*.key
+
+# Database
+*.db
+*.sqlite
+
+# Build artifacts
+/knowledge/plugins/*/plugin
+/knowledge/cmd/*/main
+
+# Coverage
+coverage.out
+coverage.html
