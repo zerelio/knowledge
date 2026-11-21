@@ -443,6 +443,23 @@ func (p *PGBackend) StoreRun(ctx context.Context, run *types.DiscoveryRun) error
 	return err
 }
 
+func (p *PGBackend) GetRun(ctx context.Context, id string) (*types.DiscoveryRun, error) {
+	row := p.pool.QueryRow(ctx, `
+		SELECT id, scope_id, status, started_at, completed_at, resources_found, relationships_found, errors
+		FROM discovery_runs WHERE id=$1`, id)
+	run := &types.DiscoveryRun{}
+	var errorsJSON []byte
+	err := row.Scan(&run.ID, &run.ScopeID, &run.Status, &run.StartedAt, &run.CompletedAt,
+		&run.ResourcesFound, &run.RelationshipsFound, &errorsJSON)
+	if err != nil {
+		return nil, err
+	}
+	if len(errorsJSON) > 0 && string(errorsJSON) != "null" {
+		_ = json.Unmarshal(errorsJSON, &run.Errors)
+	}
+	return run, nil
+}
+
 func (p *PGBackend) ListRuns(ctx context.Context, scopeID string, limit int) ([]*types.DiscoveryRun, error) {
 	if limit <= 0 {
 		limit = 50

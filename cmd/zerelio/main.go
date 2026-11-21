@@ -27,6 +27,7 @@ import (
 	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/llm"
 	"github.com/zerelio/zerelio/internal/mcp"
+	"github.com/zerelio/zerelio/internal/oidcauth"
 	"github.com/zerelio/zerelio/internal/ratelimit"
 	"github.com/zerelio/zerelio/internal/scheduler"
 	"github.com/zerelio/zerelio/internal/search"
@@ -68,6 +69,21 @@ func run(logger *slog.Logger) error {
 	}
 	if otelProviders != nil {
 		defer otelProviders.Shutdown(context.Background())
+	}
+
+	// OIDC SSO — optional; starts up gracefully if not configured.
+	var oidcProvider *oidcauth.Provider
+	oidcCfg := oidcauth.LoadConfig()
+	if oidcCfg != nil {
+		oidcProvider, err = oidcauth.NewProvider(ctx, oidcCfg)
+		if err != nil {
+			logger.Warn("OIDC provider init failed — SSO disabled", "error", err)
+			oidcCfg = nil
+		} else {
+			logger.Info("OIDC SSO enabled", "issuer", oidcCfg.Issuer)
+		}
+	} else {
+		logger.Info("OIDC SSO not configured (set ZERELIO_OIDC_ISSUER to enable)")
 	}
 
 	// Wire user-ID extractor for rate limiter (after JWT service is ready).
@@ -144,6 +160,9 @@ func run(logger *slog.Logger) error {
 	if searchSvc != nil {
 		handler.SetSearcher(searchSvc)
 	}
+	if oidcProvider != nil {
+		handler.SetOIDC(oidcProvider, oidcCfg)
+	}
 	if docGen != nil {
 		handler.SetDocGenerator(docGen)
 	}
@@ -181,6 +200,10 @@ func run(logger *slog.Logger) error {
 		r.Post("/auth/login", handler.HandleLogin)
 		r.Post("/auth/register", handler.HandleRegister)
 		r.Post("/auth/refresh", handler.HandleRefresh)
+		// OIDC SSO endpoints — unauthenticated.
+		r.Get("/auth/oidc/status", handler.HandleOIDCStatus)
+		r.Get("/auth/oidc/authorize", handler.HandleOIDCAuthorize)
+		r.Get("/auth/oidc/callback", handler.HandleOIDCCallback)
 
 		if authDisabled {
 			r.Use(func(next http.Handler) http.Handler {
@@ -214,6 +237,7 @@ func run(logger *slog.Logger) error {
 		r.Get("/discovery/scopes", handler.HandleListScopes)
 		r.Get("/discovery/scopes/{id}", handler.HandleGetScope)
 		r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
+			r.Get("/discovery/runs/{runID}", handler.HandleGetRun)
 		r.Get("/discovery/scopes/{id}/changes", handler.HandleListChanges)
 		r.Get("/discovery/plugins", handler.HandleListPlugins)
 
@@ -234,6 +258,9 @@ func run(logger *slog.Logger) error {
 			r.Use(auth.RequireRole("admin"))
 			r.Get("/admin/users", handler.HandleListUsers)
 			r.Post("/admin/users", handler.HandleCreateUser)
+			r.Get("/admin/users/{id}", handler.HandleGetUser)
+			r.Patch("/admin/users/{id}", handler.HandleUpdateUser)
+			r.Delete("/admin/users/{id}", handler.HandleDeleteUser)
 			r.Get("/admin/audit", handler.HandleListAuditEvents)
 			r.Get("/admin/quality", handler.HandleQualityMetrics)
 		})

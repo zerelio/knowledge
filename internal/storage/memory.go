@@ -221,10 +221,20 @@ func (m *MemoryBackend) DeleteScope(_ context.Context, id string) error {
 func (m *MemoryBackend) StoreRun(_ context.Context, run *types.DiscoveryRun) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Store a copy so ListRuns returns independent snapshots, never shared pointers.
 	stored := *run
 	m.runs[run.ID] = &stored
 	return nil
+}
+
+func (m *MemoryBackend) GetRun(_ context.Context, id string) (*types.DiscoveryRun, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	r, ok := m.runs[id]
+	if !ok {
+		return nil, fmt.Errorf("run %q not found", id)
+	}
+	cp := *r
+	return &cp, nil
 }
 
 func (m *MemoryBackend) ListRuns(_ context.Context, scopeID string, limit int) ([]*types.DiscoveryRun, error) {

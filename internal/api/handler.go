@@ -15,6 +15,7 @@ import (
 	"github.com/zerelio/zerelio/internal/docs"
 	"github.com/zerelio/zerelio/internal/events"
 	"github.com/zerelio/zerelio/internal/graph"
+	"github.com/zerelio/zerelio/internal/oidcauth"
 	"github.com/zerelio/zerelio/internal/search"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/pkg/types"
@@ -24,10 +25,12 @@ type Handler struct {
 	store    storage.Backend
 	jwt      *auth.JWTService
 	orch     *discovery.Orchestrator
-	graph    *graph.Graph     // optional; nil when no PG backend
-	searcher *search.Searcher // optional; nil when no PG backend
-	docGen   *docs.Generator  // optional; nil when LLM not configured
-	bus      *events.Bus      // optional; nil when event bus not configured
+	graph    *graph.Graph          // optional
+	searcher *search.Searcher      // optional
+	docGen   *docs.Generator       // optional
+	bus      *events.Bus           // optional
+	oidc     *oidcauth.Provider    // optional
+	oidcCfg  *oidcauth.Config      // optional
 	logger   *slog.Logger
 }
 
@@ -53,6 +56,12 @@ func (h *Handler) SetSearcher(s *search.Searcher) {
 // SetDocGenerator attaches the doc generation module.
 func (h *Handler) SetDocGenerator(g *docs.Generator) {
 	h.docGen = g
+}
+
+// SetOIDC attaches the OIDC provider for SSO.
+func (h *Handler) SetOIDC(p *oidcauth.Provider, cfg *oidcauth.Config) {
+	h.oidc = p
+	h.oidcCfg = cfg
 }
 
 // SetEventBus attaches the event bus to the handler.
@@ -471,6 +480,8 @@ func (h *Handler) HandleRunScope(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, run)
 }
 
+// HandleListRuns returns recent discovery runs for a scope.
+// GET /api/v1/discovery/scopes/{id}/runs?limit=50
 func (h *Handler) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 	scopeID := chi.URLParam(r, "id")
 	runs, err := h.store.ListRuns(r.Context(), scopeID, 50)
@@ -478,7 +489,19 @@ func (h *Handler) HandleListRuns(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list runs")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
+	writeJSON(w, http.StatusOK, runs)
+}
+
+// HandleGetRun returns a single discovery run by its ID.
+// GET /api/v1/discovery/runs/{runID}
+func (h *Handler) HandleGetRun(w http.ResponseWriter, r *http.Request) {
+	runID := chi.URLParam(r, "runID")
+	run, err := h.store.GetRun(r.Context(), runID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "run not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, run)
 }
 
 // HandleListChanges returns resource changes detected for a scope.
@@ -677,6 +700,69 @@ func (h *Handler) HandleQualityMetrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, metrics)
+}
+
+// ---- User management ----
+
+// HandleGetUser returns a single user by ID (admin only).
+// GET /api/v1/admin/users/{id}
+func (h *Handler) HandleGetUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	user, err := h.store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	user.PasswordHash = "" // never expose
+	writeJSON(w, http.StatusOK, user)
+}
+
+// HandleUpdateUser partially updates a user's email or roles (admin only).
+// PATCH /api/v1/admin/users/{id}
+// Body: {"email": "...", "roles": [...]}
+func (h *Handler) HandleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	user, err := h.store.GetUserByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	var req struct {
+		Email *string  `json:"email,omitempty"`
+		Roles []string `json:"roles,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Email != nil {
+		user.Email = *req.Email
+	}
+	if len(req.Roles) > 0 {
+		user.Roles = req.Roles
+	}
+	if err := h.store.UpdateUser(r.Context(), user); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update user")
+		return
+	}
+	user.PasswordHash = ""
+	writeJSON(w, http.StatusOK, user)
+}
+
+// HandleDeleteUser deletes a user by ID (admin only).
+// DELETE /api/v1/admin/users/{id}
+func (h *Handler) HandleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	// Prevent self-deletion.
+	if claims := auth.ClaimsFromContext(r.Context()); claims != nil && claims.UserID == id {
+		writeError(w, http.StatusBadRequest, "cannot delete your own account")
+		return
+	}
+	if err := h.store.DeleteUser(r.Context(), id); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete user")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

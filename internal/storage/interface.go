@@ -52,6 +52,7 @@ type Backend interface {
 	DeleteScope(ctx context.Context, id string) error
 
 	StoreRun(ctx context.Context, run *types.DiscoveryRun) error
+	GetRun(ctx context.Context, id string) (*types.DiscoveryRun, error)
 	ListRuns(ctx context.Context, scopeID string, limit int) ([]*types.DiscoveryRun, error)
 	DeleteRun(ctx context.Context, id string) error
 
