@@ -13,14 +13,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/zerelio/zerelio/internal/graph"
+	"github.com/zerelio/zerelio/internal/search"
 	"github.com/zerelio/zerelio/internal/storage"
 )
 
 // Server is the core MCP server. It holds storage references and routes
 // incoming JSON-RPC messages to tool handlers and resource readers.
 type Server struct {
-	store   storage.Backend
-	logger  *slog.Logger
+	store    storage.Backend
+	graph    *graph.Graph    // optional
+	searcher *search.Searcher // optional
+	logger   *slog.Logger
 
 	initialized bool
 	initMu      sync.RWMutex
@@ -35,6 +39,12 @@ func NewServer(store storage.Backend, logger *slog.Logger) *Server {
 		logger: logger.With("component", "mcp"),
 	}
 }
+
+// SetGraph attaches the graph module for query_graph tool support.
+func (s *Server) SetGraph(g *graph.Graph) { s.graph = g }
+
+// SetSearcher attaches the search module for search_resources tool support.
+func (s *Server) SetSearcher(sr *search.Searcher) { s.searcher = sr }
 
 // ServeStdio starts the server on stdin/stdout. Blocks until ctx is cancelled.
 func (s *Server) ServeStdio(ctx context.Context) error {
@@ -193,6 +203,43 @@ func builtInTools() []Tool {
 				},
 			},
 		},
+		{
+			Name:        "search_resources",
+			Description: "Full-text search over all discovered infrastructure. Supports BM25 ranking and optional filters. Returns scored results.",
+			InputSchema: Schema{
+				Type:     "object",
+				Required: []string{"query"},
+				Properties: map[string]Property{
+					"query":    {Type: "string", Description: "Search terms (e.g., 'prod database', 'eks cluster us-east-1')"},
+					"provider": {Type: "string", Description: "Optional: filter by provider (aws, gcp, azure, k8s)"},
+					"type":     {Type: "string", Description: "Optional: filter by resource type"},
+					"limit":    {Type: "integer", Description: "Max results (default 20)"},
+				},
+			},
+		},
+		{
+			Name:        "get_resource",
+			Description: "Get full details for a single resource by its ID.",
+			InputSchema: Schema{
+				Type:     "object",
+				Required: []string{"resource_id"},
+				Properties: map[string]Property{
+					"resource_id": {Type: "string", Description: "Resource ID"},
+				},
+			},
+		},
+		{
+			Name:        "query_graph",
+			Description: "Traverse the infrastructure knowledge graph. Returns the neighbourhood (nodes + edges) around a resource up to N hops away.",
+			InputSchema: Schema{
+				Type:     "object",
+				Required: []string{"resource_id"},
+				Properties: map[string]Property{
+					"resource_id": {Type: "string", Description: "Starting resource ID"},
+					"hops":        {Type: "integer", Description: "Max traversal depth (1-5, default 2)"},
+				},
+			},
+		},
 	}
 }
 
@@ -209,6 +256,12 @@ func (s *Server) callTool(ctx context.Context, params *ToolCallParams) (*ToolRes
 		return s.toolGetTopology(ctx, args)
 	case "get_relationships":
 		return s.toolGetRelationships(ctx, args)
+	case "search_resources":
+		return s.toolSearchResources(ctx, args)
+	case "get_resource":
+		return s.toolGetResource(ctx, args)
+	case "query_graph":
+		return s.toolQueryGraph(ctx, args)
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", params.Name)
 	}
@@ -379,8 +432,126 @@ func (s *Server) toolGetRelationships(ctx context.Context, args map[string]inter
 	return textResult(sb.String()), nil
 }
 
-// ─── Resources ───────────────────────────────────────────────────────────────
+func (s *Server) toolSearchResources(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	query := stringArg(args, "query")
+	provider := stringArg(args, "provider")
+	resType := stringArg(args, "type")
+	limit := intArg(args, "limit", 20)
 
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Search Results for %q\n\n", query))
+
+	if s.searcher != nil {
+		results, err := s.searcher.Search(ctx, search.Params{
+			Query:    query,
+			Provider: provider,
+			Type:     resType,
+			Limit:    limit,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("search: %w", err)
+		}
+		sb.WriteString(fmt.Sprintf("**Found:** %d results\n\n", len(results)))
+		if len(results) == 0 {
+			sb.WriteString("_No resources matched._\n")
+		} else {
+			sb.WriteString("| Score | Name | Type | Provider | Region |\n")
+			sb.WriteString("|-------|------|------|----------|--------|\n")
+			for _, r := range results {
+				sb.WriteString(fmt.Sprintf("| %.3f | %s | %s | %s | %s |\n",
+					r.Score, r.Resource.Name, r.Resource.Type, r.Resource.Provider, r.Resource.Region))
+			}
+		}
+	} else {
+		// Fallback: keyword filter via storage.
+		resources, total, err := s.store.GetResources(ctx, storage.ResourceFilter{
+			Query: query, Provider: provider, Type: resType, Limit: limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		sb.WriteString(fmt.Sprintf("**Found:** %d (showing %d)\n\n", total, len(resources)))
+		if len(resources) == 0 {
+			sb.WriteString("_No resources matched._\n")
+		} else {
+			sb.WriteString("| Name | Type | Provider | Region |\n|------|------|----------|--------|\n")
+			for _, r := range resources {
+				sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n", r.Name, r.Type, r.Provider, r.Region))
+			}
+		}
+	}
+	return textResult(sb.String()), nil
+}
+
+func (s *Server) toolGetResource(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	id := stringArg(args, "resource_id")
+	if id == "" {
+		return nil, fmt.Errorf("resource_id is required")
+	}
+	r, err := s.store.GetResourceByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("resource %s not found", id)
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Resource: %s\n\n", r.Name))
+	sb.WriteString(fmt.Sprintf("**ID:** `%s`\n", r.ID))
+	sb.WriteString(fmt.Sprintf("**Type:** %s\n", r.Type))
+	sb.WriteString(fmt.Sprintf("**Provider:** %s\n", r.Provider))
+	sb.WriteString(fmt.Sprintf("**Region:** %s\n", r.Region))
+	sb.WriteString(fmt.Sprintf("**Account:** %s\n", r.AccountID))
+	sb.WriteString(fmt.Sprintf("**Discovered:** %s\n", r.DiscoveredAt.Format(time.RFC3339)))
+	if len(r.Tags) > 0 {
+		sb.WriteString(fmt.Sprintf("**Tags:** %s\n", strings.Join(r.Tags, ", ")))
+	}
+	if len(r.Properties) > 0 {
+		sb.WriteString("\n### Properties\n\n| Key | Value |\n|-----|-------|\n")
+		for k, v := range r.Properties {
+			sb.WriteString(fmt.Sprintf("| %s | %s |\n", k, v))
+		}
+	}
+	return textResult(sb.String()), nil
+}
+
+func (s *Server) toolQueryGraph(ctx context.Context, args map[string]interface{}) (*ToolResult, error) {
+	id := stringArg(args, "resource_id")
+	if id == "" {
+		return nil, fmt.Errorf("resource_id is required")
+	}
+	hops := intArg(args, "hops", 2)
+
+	if s.graph == nil {
+		return textResult("_Graph module not available. Start Zerelio with a PostgreSQL backend to enable graph traversal._"), nil
+	}
+
+	subgraph, err := s.graph.Neighborhood(ctx, id, hops)
+	if err != nil {
+		return nil, fmt.Errorf("graph query: %w", err)
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Graph Neighbourhood: `%s` (%d hops)\n\n", id, hops))
+	sb.WriteString(fmt.Sprintf("**Nodes:** %d  **Edges:** %d\n\n", len(subgraph.Nodes), len(subgraph.Edges)))
+
+	if len(subgraph.Nodes) > 0 {
+		sb.WriteString("### Nodes\n\n| ID | Type | Provider | Region |\n|----|------|----------|--------|\n")
+		for _, n := range subgraph.Nodes {
+			typ, _ := n.Properties["type"].(string)
+			prov, _ := n.Properties["provider"].(string)
+			reg, _ := n.Properties["region"].(string)
+			sb.WriteString(fmt.Sprintf("| `%s` | %s | %s | %s |\n", n.ID, typ, prov, reg))
+		}
+		sb.WriteString("\n")
+	}
+	if len(subgraph.Edges) > 0 {
+		sb.WriteString("### Edges\n\n| Source | Type | Target |\n|--------|------|--------|\n")
+		for _, e := range subgraph.Edges {
+			sb.WriteString(fmt.Sprintf("| `%s` | %s | `%s` |\n", e.SourceID, e.Type, e.TargetID))
+		}
+	}
+	return textResult(sb.String()), nil
+}
+
+// ─── Resources ───────────────────────────────────────────────────────────────
 func resourceDescriptions() []ResourceDescription {
 	return []ResourceDescription{
 		{URI: "zerelio://summary", Name: "Executive Summary", Description: "High-level summary of all discovered infrastructure.", MimeType: "text/markdown"},

@@ -22,6 +22,7 @@ import (
 	"github.com/zerelio/zerelio/internal/discovery"
 	"github.com/zerelio/zerelio/internal/graph"
 	"github.com/zerelio/zerelio/internal/mcp"
+	"github.com/zerelio/zerelio/internal/search"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/internal/telemetry"
 )
@@ -62,8 +63,8 @@ func run(logger *slog.Logger) error {
 	orch := discovery.NewOrchestrator(backend, logger)
 	loadPlugins(orch, logger)
 
-	// Set up graph module when backed by PostgreSQL.
 	var graphSvc *graph.Graph
+	var searchSvc *search.Searcher
 	if pgb, ok := backend.(*storage.PGBackend); ok {
 		graphSvc = graph.New(pgb.Pool(), logger)
 		if err := graphSvc.Setup(ctx); err != nil {
@@ -72,13 +73,23 @@ func run(logger *slog.Logger) error {
 		} else {
 			orch.SetGraph(graphSvc)
 		}
+		searchSvc = search.New(pgb.Pool(), logger)
 	}
 
 	handler := api.NewHandler(backend, jwtSvc, orch, logger)
 	if graphSvc != nil {
 		handler.SetGraph(graphSvc)
 	}
+	if searchSvc != nil {
+		handler.SetSearcher(searchSvc)
+	}
 	mcpServer := mcp.NewServer(backend, logger)
+	if graphSvc != nil {
+		mcpServer.SetGraph(graphSvc)
+	}
+	if searchSvc != nil {
+		mcpServer.SetSearcher(searchSvc)
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -112,6 +123,7 @@ func run(logger *slog.Logger) error {
 
 		r.Get("/resources", handler.HandleListResources)
 		r.Get("/resources/{id}", handler.HandleGetResource)
+		r.Get("/search", handler.HandleSearch)
 		r.Get("/graph/export", handler.HandleGraphExport)
 		r.Get("/graph/neighborhood/{id}", handler.HandleNeighborhood)
 		r.Post("/graph/cypher", handler.HandleCypher)

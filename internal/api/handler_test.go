@@ -317,3 +317,44 @@ func TestHandleNeighborhoodNoGraph(t *testing.T) {
 		t.Errorf("expected 503 without graph, got %d", rec.Code)
 	}
 }
+
+func TestHandleSearch(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Pre-populate some resources.
+	now := time.Now()
+	resources := []*types.Resource{
+		{ID: "r1", Name: "prod-db", Type: "aws:rds:instance", Provider: "aws", Region: "us-east-1", TenantID: "tenant_test", DiscoveredAt: now, ValidFrom: now},
+		{ID: "r2", Name: "staging-bucket", Type: "aws:s3:bucket", Provider: "aws", Region: "eu-west-1", TenantID: "tenant_test", DiscoveredAt: now, ValidFrom: now},
+		{ID: "r3", Name: "k8s-cluster", Type: "k8s:cluster", Provider: "k8s", Region: "us-west-2", TenantID: "tenant_test", DiscoveredAt: now, ValidFrom: now},
+	}
+	h.store.StoreResources(context.Background(), resources) //nolint:errcheck
+
+	// Search with query (searcher is nil, falls back to filter).
+	req := httptest.NewRequest(http.MethodGet, "/search?q=prod", nil)
+	rec := httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleSearch)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]any
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	results, _ := resp["results"].([]any)
+	if len(results) == 0 {
+		t.Error("expected at least one result for 'prod'")
+	}
+
+	// Filter by provider.
+	req = httptest.NewRequest(http.MethodGet, "/search?provider=k8s", nil)
+	rec = httptest.NewRecorder()
+	injectClaims(http.HandlerFunc(h.HandleSearch)).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("search by provider status = %d", rec.Code)
+	}
+	var resp2 map[string]any
+	json.NewDecoder(rec.Body).Decode(&resp2) //nolint:errcheck
+	results2, _ := resp2["results"].([]any)
+	if len(results2) != 1 {
+		t.Errorf("expected 1 k8s result, got %d", len(results2))
+	}
+}

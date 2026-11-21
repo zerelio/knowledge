@@ -12,16 +12,18 @@ import (
 	"github.com/zerelio/zerelio/internal/auth"
 	"github.com/zerelio/zerelio/internal/discovery"
 	"github.com/zerelio/zerelio/internal/graph"
+	"github.com/zerelio/zerelio/internal/search"
 	"github.com/zerelio/zerelio/internal/storage"
 	"github.com/zerelio/zerelio/pkg/types"
 )
 
 type Handler struct {
-	store  storage.Backend
-	jwt    *auth.JWTService
-	orch   *discovery.Orchestrator
-	graph  *graph.Graph // optional; nil when no PG backend
-	logger *slog.Logger
+	store    storage.Backend
+	jwt      *auth.JWTService
+	orch     *discovery.Orchestrator
+	graph    *graph.Graph    // optional; nil when no PG backend
+	searcher *search.Searcher // optional; nil when no PG backend
+	logger   *slog.Logger
 }
 
 func NewHandler(store storage.Backend, jwt *auth.JWTService, orch *discovery.Orchestrator, logger *slog.Logger) *Handler {
@@ -36,6 +38,11 @@ func NewHandler(store storage.Backend, jwt *auth.JWTService, orch *discovery.Orc
 // SetGraph attaches the graph module to the handler (called after setup in main).
 func (h *Handler) SetGraph(g *graph.Graph) {
 	h.graph = g
+}
+
+// SetSearcher attaches the search module to the handler.
+func (h *Handler) SetSearcher(s *search.Searcher) {
+	h.searcher = s
 }
 
 func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -332,6 +339,68 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// ---- Graph handlers ----
+
+// HandleSearch runs a hybrid BM25 + vector search over resources.
+// GET /api/v1/search?q=...&provider=...&type=...&limit=20
+func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	provider := r.URL.Query().Get("provider")
+	resType := r.URL.Query().Get("type")
+	limit := 20
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	claims := auth.ClaimsFromContext(r.Context())
+
+	// Use the full-featured searcher when available (PG backend).
+	if h.searcher != nil {
+		results, err := h.searcher.Search(r.Context(), search.Params{
+			Query:    q,
+			Provider: provider,
+			Type:     resType,
+			TenantID: claims.TenantID,
+			Limit:    limit,
+		})
+		if err != nil {
+			h.logger.Error("search", "query", q, "error", err)
+			writeError(w, http.StatusInternalServerError, "search failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"results": results,
+			"total":   len(results),
+			"query":   q,
+		})
+		return
+	}
+
+	// Fallback: use storage filter (MemoryBackend or no searcher).
+	resources, total, err := h.store.GetResources(r.Context(), storage.ResourceFilter{
+		Query:    q,
+		Provider: provider,
+		Type:     resType,
+		TenantID: claims.TenantID,
+		Limit:    limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "search failed")
+		return
+	}
+	results := make([]map[string]any, len(resources))
+	for i, res := range resources {
+		results[i] = map[string]any{"resource": res, "score": 1.0, "signals": []string{"filter"}}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"results": results,
+		"total":   total,
+		"query":   q,
+	})
 }
 
 // ---- Graph handlers ----
