@@ -205,78 +205,87 @@ func run(logger *slog.Logger) error {
 	})
 
 	r.Route("/api/v1", func(r chi.Router) {
+		// ── Public (unauthenticated) routes ──────────────────────────────
+		// Registered directly on the parent mux with no Use() calls so that
+		// chi v5.5.0's strict "middleware before routes" rule is respected.
 		r.Post("/auth/login", handler.HandleLogin)
 		r.Post("/auth/register", handler.HandleRegister)
 		r.Post("/auth/refresh", handler.HandleRefresh)
-		// OIDC SSO endpoints — unauthenticated.
 		r.Get("/auth/oidc/status", handler.HandleOIDCStatus)
 		r.Get("/auth/oidc/authorize", handler.HandleOIDCAuthorize)
 		r.Get("/auth/oidc/callback", handler.HandleOIDCCallback)
-		// Health — unauthenticated (used by LBs + console dashboard).
 		r.Get("/health", handler.HandleHealth)
 
-		if authDisabled {
-			r.Use(func(next http.Handler) http.Handler {
-				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					claims := &auth.Claims{UserID: "dev_admin", Email: "admin@localhost", Roles: []string{"admin"}, TenantID: "dev"}
-					ctx := auth.ContextWithClaims(r.Context(), claims)
-					ctx = storage.WithTenantID(ctx, claims.TenantID)
-					next.ServeHTTP(w, r.WithContext(ctx))
+		// ── Authenticated routes ──────────────────────────────────────────
+		// All in one sub-group so middleware is declared before any routes.
+		r.Group(func(r chi.Router) {
+			// Middleware first — before any route on this group's mux.
+			if authDisabled {
+				r.Use(func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						claims := &auth.Claims{UserID: "dev_admin", Email: "admin@localhost", Roles: []string{"admin"}, TenantID: "dev"}
+						ctx := auth.ContextWithClaims(r.Context(), claims)
+						ctx = storage.WithTenantID(ctx, claims.TenantID)
+						next.ServeHTTP(w, r.WithContext(ctx))
+					})
 				})
-			})
-		} else {
-			r.Use(auth.Authenticator(jwtSvc))
-		}
-		r.Use(userLimiter)
+			} else {
+				r.Use(auth.Authenticator(jwtSvc))
+			}
+			r.Use(userLimiter)
 
-		r.Get("/resources", handler.HandleListResources)
-		r.Get("/resources/{id}", handler.HandleGetResource)
-		r.Get("/search", handler.HandleSearch)
-		r.Get("/graph/export", handler.HandleGraphExport)
-		r.Get("/graph/neighborhood/{id}", handler.HandleNeighborhood)
-		r.Post("/graph/cypher", handler.HandleCypher)
+			// Read-only endpoints (any authenticated user).
+			r.Get("/resources", handler.HandleListResources)
+			r.Get("/resources/{id}", handler.HandleGetResource)
+			r.Get("/search", handler.HandleSearch)
+			r.Get("/graph/export", handler.HandleGraphExport)
+			r.Get("/graph/neighborhood/{id}", handler.HandleNeighborhood)
+			r.Post("/graph/cypher", handler.HandleCypher)
 
-		r.Get("/docs/{id}", handler.HandleGenerateDoc)
-		r.Post("/runbooks", handler.HandleGenerateRunbook)
+			r.Get("/docs/{id}", handler.HandleGenerateDoc)
+			r.Post("/runbooks", handler.HandleGenerateRunbook)
 
-		r.Get("/generations", handler.HandleListGenerations)
-		r.Get("/generations/{id}", handler.HandleGetGeneration)
-		r.Post("/generations/{id}/feedback", handler.HandleSubmitFeedback)
-		r.Put("/generations/{id}/status", handler.HandleDocumentStatus)
+			r.Get("/generations", handler.HandleListGenerations)
+			r.Get("/generations/{id}", handler.HandleGetGeneration)
+			r.Post("/generations/{id}/feedback", handler.HandleSubmitFeedback)
+			r.Put("/generations/{id}/status", handler.HandleDocumentStatus)
 
-		r.Get("/discovery/scopes", handler.HandleListScopes)
-		r.Get("/discovery/scopes/{id}", handler.HandleGetScope)
-		r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
+			r.Get("/discovery/scopes", handler.HandleListScopes)
+			r.Get("/discovery/scopes/{id}", handler.HandleGetScope)
+			r.Get("/discovery/scopes/{id}/runs", handler.HandleListRuns)
 			r.Get("/discovery/runs", handler.HandleListAllRuns)
-				r.Get("/discovery/runs/{runID}", handler.HandleGetRun)
-		r.Get("/compliance/findings", handler.HandleListFindings)
+			r.Get("/discovery/runs/{runID}", handler.HandleGetRun)
+			r.Get("/compliance/findings", handler.HandleListFindings)
 			r.Patch("/compliance/findings/{id}", handler.HandleUpdateFindingStatus)
 			r.Get("/discovery/scopes/{id}/changes", handler.HandleListChanges)
 			r.Get("/knowledge/summaries", handler.HandleListKnowledgeSummaries)
-		r.Get("/discovery/plugins", handler.HandleListPlugins)
+			r.Get("/discovery/plugins", handler.HandleListPlugins)
 
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("editor", "admin"))
-			r.Post("/resources", handler.HandleCreateResources)
-			r.Delete("/resources/{id}", handler.HandleDeleteResource)
-			r.Post("/discovery/scopes", handler.HandleCreateScope)
-			r.Patch("/discovery/scopes/{id}", handler.HandleUpdateScope)
-			r.Delete("/discovery/scopes/{id}", handler.HandleDeleteScope)
-			r.Post("/discovery/scopes/{id}/run", handler.HandleRunScope)
-			r.Get("/webhooks", handler.HandleListWebhooks)
-			r.Post("/webhooks", handler.HandleCreateWebhook)
-			r.Delete("/webhooks/{id}", handler.HandleDeleteWebhook)
-		})
+			// Editor+ endpoints.
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("editor", "admin"))
+				r.Post("/resources", handler.HandleCreateResources)
+				r.Delete("/resources/{id}", handler.HandleDeleteResource)
+				r.Post("/discovery/scopes", handler.HandleCreateScope)
+				r.Patch("/discovery/scopes/{id}", handler.HandleUpdateScope)
+				r.Delete("/discovery/scopes/{id}", handler.HandleDeleteScope)
+				r.Post("/discovery/scopes/{id}/run", handler.HandleRunScope)
+				r.Get("/webhooks", handler.HandleListWebhooks)
+				r.Post("/webhooks", handler.HandleCreateWebhook)
+				r.Delete("/webhooks/{id}", handler.HandleDeleteWebhook)
+			})
 
-		r.Group(func(r chi.Router) {
-			r.Use(auth.RequireRole("admin"))
-			r.Get("/admin/users", handler.HandleListUsers)
-			r.Post("/admin/users", handler.HandleCreateUser)
-			r.Get("/admin/users/{id}", handler.HandleGetUser)
-			r.Patch("/admin/users/{id}", handler.HandleUpdateUser)
-			r.Delete("/admin/users/{id}", handler.HandleDeleteUser)
-			r.Get("/admin/audit", handler.HandleListAuditEvents)
-			r.Get("/admin/quality", handler.HandleQualityMetrics)
+			// Admin-only endpoints.
+			r.Group(func(r chi.Router) {
+				r.Use(auth.RequireRole("admin"))
+				r.Get("/admin/users", handler.HandleListUsers)
+				r.Post("/admin/users", handler.HandleCreateUser)
+				r.Get("/admin/users/{id}", handler.HandleGetUser)
+				r.Patch("/admin/users/{id}", handler.HandleUpdateUser)
+				r.Delete("/admin/users/{id}", handler.HandleDeleteUser)
+				r.Get("/admin/audit", handler.HandleListAuditEvents)
+				r.Get("/admin/quality", handler.HandleQualityMetrics)
+			})
 		})
 	})
 

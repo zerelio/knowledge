@@ -1,0 +1,52 @@
+version: "3.9"
+
+# Quick local test using the published ghcr.io image.
+# Runs Zerelio with auth disabled so you can hit the API immediately.
+#
+# Usage:
+#   docker compose -f docker-compose.local.yml up
+#
+# Then open:
+#   Console:  http://localhost:3000  (if running zerelio/console separately)
+#   API:      http://localhost:8080/api/v1/health
+#   MCP:      http://localhost:8080/mcp
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: zerelio
+      POSTGRES_PASSWORD: zerelio_dev
+      POSTGRES_DB: zerelio
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zerelio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  zerelio:
+    image: zerelio/knowledge:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ZERELIO_DATABASE_URL: postgres://zerelio:zerelio_dev@postgres:5432/zerelio?sslmode=disable
+      ZERELIO_POSTGRES_DSN: postgres://zerelio:zerelio_dev@postgres:5432/zerelio?sslmode=disable
+      ZERELIO_MIGRATIONS_DIR: /migrations
+      ZERELIO_JWT_SECRET: local-dev-secret-change-for-production
+      ZERELIO_AUTH_DISABLED: "true"
+      ZERELIO_LOG_LEVEL: info
+      ZERELIO_ADDR: ":8080"
+    volumes:
+      - ./db/migrations:/migrations:ro
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
