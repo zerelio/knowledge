@@ -3,6 +3,8 @@ package auth
 import (
 	"net/http"
 	"strings"
+
+	"github.com/zerelio/zerelio/internal/storage"
 )
 
 func Authenticator(jwtSvc *JWTService) func(http.Handler) http.Handler {
@@ -27,6 +29,8 @@ func Authenticator(jwtSvc *JWTService) func(http.Handler) http.Handler {
 			}
 
 			ctx := ContextWithClaims(r.Context(), claims)
+			// Also stamp the tenant ID onto the context for pgx RLS (storage.WithTenantID).
+			ctx = storage.WithTenantID(ctx, claims.TenantID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

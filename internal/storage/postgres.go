@@ -12,6 +12,21 @@ import (
 	"github.com/zerelio/zerelio/pkg/types"
 )
 
+// tenantContextKey is a context key for the current tenant ID.
+// Set by the auth middleware via storage.WithTenantID(); read by BeforeAcquire.
+type tenantContextKey struct{}
+
+// WithTenantID returns a context carrying the given tenant ID for RLS.
+func WithTenantID(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, tenantContextKey{}, tenantID)
+}
+
+// tenantIDFromContext extracts the tenant ID set by WithTenantID.
+func tenantIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(tenantContextKey{}).(string)
+	return v
+}
+
 // PGBackend is the production PostgreSQL storage backend.
 // It requires PostgreSQL with the Apache AGE and pgvector extensions.
 // Schema migration is handled externally (e.g., via golang-migrate).
@@ -39,6 +54,19 @@ func (p *PGBackend) Connect(ctx context.Context) error {
 	cfg.MaxConnLifetime = 30 * time.Minute
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.HealthCheckPeriod = 1 * time.Minute
+
+	// PrepareConn: set app.current_tenant on each connection before it's returned
+	// to a caller. This activates PostgreSQL RLS policies that filter rows by
+	// current_setting('app.current_tenant', TRUE). Empty tenantID = admin access (no filter).
+	cfg.PrepareConn = func(ctx context.Context, conn *pgx.Conn) (bool, error) {
+		tenantID := tenantIDFromContext(ctx)
+		if tenantID != "" {
+			_, err := conn.Exec(ctx, "SET app.current_tenant = $1", tenantID)
+			return true, err
+		}
+		_, err := conn.Exec(ctx, "RESET app.current_tenant")
+		return true, err
+	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

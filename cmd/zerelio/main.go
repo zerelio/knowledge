@@ -167,8 +167,9 @@ func run(logger *slog.Logger) error {
 		if authDisabled {
 			r.Use(func(next http.Handler) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					claims := &auth.Claims{UserID: "dev_admin", Email: "admin@localhost", Roles: []string{"admin"}}
+					claims := &auth.Claims{UserID: "dev_admin", Email: "admin@localhost", Roles: []string{"admin"}, TenantID: "dev"}
 					ctx := auth.ContextWithClaims(r.Context(), claims)
+					ctx = storage.WithTenantID(ctx, claims.TenantID)
 					next.ServeHTTP(w, r.WithContext(ctx))
 				})
 			})

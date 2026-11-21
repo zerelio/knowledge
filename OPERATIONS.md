@@ -306,8 +306,7 @@ pg_restore -h $DB_HOST -U $DB_USER -d zerelio_restore zerelio-20260101.dump
 
 ## 11. Known gaps (not yet production-ready)
 
-- [ ] Multi-tenant RLS: `app.current_tenant` is not set on pgx connections — isolation is app-level only
 - [ ] No TLS on the server itself (requires a reverse proxy: nginx, Caddy, AWS ALB)
 - [ ] No Helm chart
-- [ ] Plugin binaries must be built from source — no pre-built release artifacts yet
+- [ ] Plugin binaries must be built from source (`make plugins`) — no pre-built release artifacts yet
 - [ ] `ZERELIO_JWT_PRIVATE_KEY` rotation requires a restart
