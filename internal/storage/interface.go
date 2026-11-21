@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"time"
 
 	"github.com/zerelio/zerelio/pkg/types"
 )
@@ -49,11 +50,17 @@ type Backend interface {
 	DeleteRun(ctx context.Context, id string) error
 
 	GetUserByEmail(ctx context.Context, email string) (*types.User, error)
+	GetUserByID(ctx context.Context, id string) (*types.User, error)
 	ListUsers(ctx context.Context, tenantID string) ([]*types.User, error)
 	CreateUser(ctx context.Context, user *types.User) error
 	UpdateUser(ctx context.Context, user *types.User) error
 	DeleteUser(ctx context.Context, id string) error
 	CountUsers(ctx context.Context, tenantID string) (int, error)
+
+	StoreRefreshToken(ctx context.Context, jti, userID string, expiresAt time.Time) error
+	GetRefreshToken(ctx context.Context, jti string) (*types.RefreshToken, error)
+	RevokeRefreshToken(ctx context.Context, jti string) error
+	RevokeUserRefreshTokens(ctx context.Context, userID string) error
 
 	GetConfig(ctx context.Context, key string) (string, error)
 	SetConfig(ctx context.Context, key, value string) error

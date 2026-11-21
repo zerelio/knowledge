@@ -59,6 +59,12 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.store.StoreRefreshToken(r.Context(), pair.RefreshJTI, user.ID, pair.RefreshTokenExpiry); err != nil {
+		h.logger.Error("store refresh token", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to store session")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, pair)
 }
 
@@ -318,4 +324,60 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// HandleRefresh validates a refresh token, revokes it, and issues a new token pair.
+// This implements single-use refresh token rotation: each use produces a new pair.
+func (h *Handler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.RefreshToken == "" {
+		writeError(w, http.StatusBadRequest, "refresh_token required")
+		return
+	}
+
+	// Validate signature + expiry.
+	claims, err := h.jwt.ValidateRefreshToken(req.RefreshToken)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid or expired refresh token")
+		return
+	}
+
+	// Look up JTI in store — must exist and not be revoked.
+	rt, err := h.store.GetRefreshToken(r.Context(), claims.ID)
+	if err != nil || rt.Revoked || rt.ExpiresAt.Before(time.Now()) {
+		writeError(w, http.StatusUnauthorized, "refresh token revoked or expired")
+		return
+	}
+
+	// Revoke the used JTI (rotation: one-time use).
+	if err := h.store.RevokeRefreshToken(r.Context(), claims.ID); err != nil {
+		h.logger.Error("revoke refresh token", "jti", claims.ID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to rotate token")
+		return
+	}
+
+	// Load the user to get current roles and tenant.
+	user, err := h.store.GetUserByID(r.Context(), claims.Subject)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+
+	// Issue new token pair and store the new JTI.
+	pair, err := h.jwt.IssueTokens(user.ID, user.Email, user.TenantID, user.Roles)
+	if err != nil {
+		h.logger.Error("issue tokens on refresh", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to issue tokens")
+		return
+	}
+
+	if err := h.store.StoreRefreshToken(r.Context(), pair.RefreshJTI, user.ID, pair.RefreshTokenExpiry); err != nil {
+		h.logger.Error("store new refresh token", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to store session")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, pair)
 }

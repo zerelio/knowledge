@@ -5,28 +5,31 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/zerelio/zerelio/pkg/types"
 )
 
 type MemoryBackend struct {
-	mu            sync.RWMutex
-	resources     map[string]*types.Resource
-	relationships map[string]*types.Relationship
-	scopes        map[string]*types.DiscoveryScope
-	runs          map[string]*types.DiscoveryRun
-	users         map[string]*types.User
-	config        map[string]string
+	mu              sync.RWMutex
+	resources       map[string]*types.Resource
+	relationships   map[string]*types.Relationship
+	scopes          map[string]*types.DiscoveryScope
+	runs            map[string]*types.DiscoveryRun
+	users           map[string]*types.User
+	refreshTokens   map[string]*types.RefreshToken
+	config          map[string]string
 }
 
 func NewMemoryBackend() *MemoryBackend {
 	return &MemoryBackend{
-		resources:     make(map[string]*types.Resource),
-		relationships: make(map[string]*types.Relationship),
-		scopes:        make(map[string]*types.DiscoveryScope),
-		runs:          make(map[string]*types.DiscoveryRun),
-		users:         make(map[string]*types.User),
-		config:        make(map[string]string),
+		resources:       make(map[string]*types.Resource),
+		relationships:   make(map[string]*types.Relationship),
+		scopes:          make(map[string]*types.DiscoveryScope),
+		runs:            make(map[string]*types.DiscoveryRun),
+		users:           make(map[string]*types.User),
+		refreshTokens:   make(map[string]*types.RefreshToken),
+		config:          make(map[string]string),
 	}
 }
 
@@ -226,6 +229,16 @@ func (m *MemoryBackend) GetUserByEmail(_ context.Context, email string) (*types.
 	return nil, fmt.Errorf("user %s not found", email)
 }
 
+func (m *MemoryBackend) GetUserByID(_ context.Context, id string) (*types.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	u, ok := m.users[id]
+	if !ok {
+		return nil, fmt.Errorf("user %s not found", id)
+	}
+	return u, nil
+}
+
 func (m *MemoryBackend) ListUsers(_ context.Context, tenantID string) ([]*types.User, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -312,4 +325,51 @@ func (m *MemoryBackend) ExportGraph(_ context.Context, tenantID string) ([]*type
 	}
 
 	return resources, rels, nil
+}
+
+// ---- Refresh tokens ----
+
+func (m *MemoryBackend) StoreRefreshToken(_ context.Context, jti, userID string, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.refreshTokens[jti] = &types.RefreshToken{
+		JTI:       jti,
+		UserID:    userID,
+		IssuedAt:  time.Now(),
+		ExpiresAt: expiresAt,
+		Revoked:   false,
+	}
+	return nil
+}
+
+func (m *MemoryBackend) GetRefreshToken(_ context.Context, jti string) (*types.RefreshToken, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	rt, ok := m.refreshTokens[jti]
+	if !ok {
+		return nil, fmt.Errorf("refresh token %s not found", jti)
+	}
+	return rt, nil
+}
+
+func (m *MemoryBackend) RevokeRefreshToken(_ context.Context, jti string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rt, ok := m.refreshTokens[jti]
+	if !ok {
+		return fmt.Errorf("refresh token %s not found", jti)
+	}
+	rt.Revoked = true
+	return nil
+}
+
+func (m *MemoryBackend) RevokeUserRefreshTokens(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, rt := range m.refreshTokens {
+		if rt.UserID == userID {
+			rt.Revoked = true
+		}
+	}
+	return nil
 }

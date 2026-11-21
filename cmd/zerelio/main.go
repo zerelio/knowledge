@@ -76,6 +76,7 @@ func run(logger *slog.Logger) error {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/auth/login", handler.HandleLogin)
 		r.Post("/auth/register", handler.HandleRegister)
+		r.Post("/auth/refresh", handler.HandleRefresh)
 
 		if authDisabled {
 			r.Use(func(next http.Handler) http.Handler {

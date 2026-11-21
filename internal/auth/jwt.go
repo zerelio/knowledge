@@ -19,10 +19,12 @@ type Claims struct {
 }
 
 type TokenPair struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	TokenType    string `json:"token_type"`
-	ExpiresIn    int    `json:"expires_in"`
+	AccessToken         string    `json:"access_token"`
+	RefreshToken        string    `json:"refresh_token"`
+	TokenType           string    `json:"token_type"`
+	ExpiresIn           int       `json:"expires_in"`
+	RefreshJTI          string    `json:"-"` // internal — stored server-side, not exposed to client
+	RefreshTokenExpiry  time.Time `json:"-"`
 }
 
 type JWTService struct {
@@ -56,6 +58,7 @@ func (s *JWTService) IssueTokens(userID, email, tenantID string, roles []string)
 			Issuer:    s.issuer,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTokenTTL)),
+			ID:        generateTokenID(), // unique JTI per access token
 		},
 		UserID:   userID,
 		Email:    email,
@@ -84,10 +87,12 @@ func (s *JWTService) IssueTokens(userID, email, tenantID string, roles []string)
 	}
 
 	return &TokenPair{
-		AccessToken:  accessStr,
-		RefreshToken: refreshStr,
-		TokenType:    "Bearer",
-		ExpiresIn:    int(s.accessTokenTTL.Seconds()),
+		AccessToken:        accessStr,
+		RefreshToken:       refreshStr,
+		TokenType:          "Bearer",
+		ExpiresIn:          int(s.accessTokenTTL.Seconds()),
+		RefreshJTI:         refreshClaims.ID,
+		RefreshTokenExpiry: now.Add(s.refreshTokenTTL),
 	}, nil
 }
 

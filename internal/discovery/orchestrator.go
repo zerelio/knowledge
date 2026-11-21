@@ -182,6 +182,13 @@ func (o *Orchestrator) executeRun(ctx context.Context, run *types.DiscoveryRun, 
 		o.logger.Error("failed to persist run", "run_id", run.ID, "error", err)
 	}
 
+	// Update scope: record last run time and resource count.
+	scope.LastRun = &now
+	scope.ResourceCount = resourceCount
+	if err := o.store.UpdateScope(ctx, scope); err != nil {
+		o.logger.Error("failed to update scope after run", "scope_id", scope.ID, "error", err)
+	}
+
 	o.logger.Info("discovery run completed",
 		"run_id", run.ID, "status", run.Status,
 		"resources", resourceCount, "relationships", relCount, "errors", len(runErrors),

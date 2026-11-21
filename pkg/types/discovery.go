@@ -22,6 +22,8 @@ type DiscoveryScope struct {
 	TenantID         string            `json:"tenant_id,omitempty"`
 	LastRun          *time.Time        `json:"last_run,omitempty"`
 	ResourceCount    int               `json:"resource_count"`
+	CreatedAt        time.Time         `json:"created_at,omitempty"`
+	UpdatedAt        time.Time         `json:"updated_at,omitempty"`
 }
 
 type CredentialSource struct {

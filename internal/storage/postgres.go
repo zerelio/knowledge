@@ -368,10 +368,10 @@ func (p *PGBackend) UpdateScope(ctx context.Context, scope *types.DiscoveryScope
 	_, err := p.pool.Exec(ctx, `
 		UPDATE discovery_scopes
 		SET name=$2, plugin_name=$3, config=$4, credential_source=$5,
-		    schedule=$6, status=$7, resource_count=$8, updated_at=now()
+		    schedule=$6, status=$7, resource_count=$8, last_run=$9, updated_at=now()
 		WHERE id=$1`,
 		scope.ID, scope.Name, scope.PluginName, configJSON, credJSON,
-		scope.Schedule, scope.Status, scope.ResourceCount,
+		scope.Schedule, scope.Status, scope.ResourceCount, scope.LastRun,
 	)
 	return err
 }
@@ -450,6 +450,19 @@ func (p *PGBackend) GetUserByEmail(ctx context.Context, email string) (*types.Us
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get user by email: %w", err)
+	}
+	return u, nil
+}
+
+func (p *PGBackend) GetUserByID(ctx context.Context, id string) (*types.User, error) {
+	u := &types.User{}
+	err := p.pool.QueryRow(ctx, `
+		SELECT id, email, password_hash, roles, tenant_id, created_at, updated_at
+		FROM users WHERE id = $1`, id).Scan(
+		&u.ID, &u.Email, &u.PasswordHash, &u.Roles, &u.TenantID, &u.CreatedAt, &u.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get user by id: %w", err)
 	}
 	return u, nil
 }
@@ -552,4 +565,39 @@ func (p *PGBackend) ExportGraph(ctx context.Context, tenantID string) ([]*types.
 	}
 
 	return resources, rels, nil
+}
+
+// ---- Refresh tokens ----
+
+func (p *PGBackend) StoreRefreshToken(ctx context.Context, jti, userID string, expiresAt time.Time) error {
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO refresh_tokens (jti, user_id, expires_at)
+		VALUES ($1,$2,$3)
+		ON CONFLICT (jti) DO NOTHING`,
+		jti, userID, expiresAt,
+	)
+	return err
+}
+
+func (p *PGBackend) GetRefreshToken(ctx context.Context, jti string) (*types.RefreshToken, error) {
+	rt := &types.RefreshToken{}
+	err := p.pool.QueryRow(ctx, `
+		SELECT jti, user_id, issued_at, expires_at, revoked
+		FROM refresh_tokens WHERE jti = $1`, jti).Scan(
+		&rt.JTI, &rt.UserID, &rt.IssuedAt, &rt.ExpiresAt, &rt.Revoked,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get refresh token: %w", err)
+	}
+	return rt, nil
+}
+
+func (p *PGBackend) RevokeRefreshToken(ctx context.Context, jti string) error {
+	_, err := p.pool.Exec(ctx, `UPDATE refresh_tokens SET revoked=TRUE WHERE jti=$1`, jti)
+	return err
+}
+
+func (p *PGBackend) RevokeUserRefreshTokens(ctx context.Context, userID string) error {
+	_, err := p.pool.Exec(ctx, `UPDATE refresh_tokens SET revoked=TRUE WHERE user_id=$1`, userID)
+	return err
 }

@@ -24,6 +24,12 @@ jobs:
       - name: Test
         run: go test -buildvcs=false -race -count=1 -timeout 120s ./...
 
+      - name: Integration tests
+        run: go test -buildvcs=false -tags=integration -race -count=1 -timeout 300s ./internal/storage/
+        env:
+          ZERELIO_INTEGRATION: "1"
+        # Requires Docker — enabled on ubuntu-latest GitHub-hosted runners.
+
       - name: Vet
         run: go vet ./...
 

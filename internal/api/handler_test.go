@@ -193,3 +193,64 @@ func TestHandleGetResource(t *testing.T) {
 		t.Errorf("resource id = %q, want res_002", got.ID)
 	}
 }
+
+func TestHandleRefresh(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Register + login to get a valid token pair.
+	cred := map[string]any{"email": "user@refresh.com", "password": "hunter2-extra-long-enough"}
+	body, _ := json.Marshal(cred)
+	req := httptest.NewRequest(http.MethodPost, "/register", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	h.HandleRegister(httptest.NewRecorder(), req)
+
+	loginBody, _ := json.Marshal(map[string]string{"email": "user@refresh.com", "password": "hunter2-extra-long-enough"})
+	req = httptest.NewRequest(http.MethodPost, "/login", bytes.NewBuffer(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.HandleLogin(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d", rec.Code)
+	}
+
+	var pair1 struct {
+		RefreshToken string `json:"refresh_token"`
+		AccessToken  string `json:"access_token"`
+	}
+	json.NewDecoder(rec.Body).Decode(&pair1) //nolint:errcheck
+	if pair1.RefreshToken == "" {
+		t.Fatal("no refresh_token in login response")
+	}
+
+	// Use the refresh token.
+	refreshBody, _ := json.Marshal(map[string]string{"refresh_token": pair1.RefreshToken})
+	req = httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewBuffer(refreshBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.HandleRefresh(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh status = %d; body: %s", rec.Code, rec.Body.String())
+	}
+
+	var pair2 struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	json.NewDecoder(rec.Body).Decode(&pair2) //nolint:errcheck
+	if pair2.AccessToken == "" {
+		t.Error("no access_token in refresh response")
+	}
+	if pair2.AccessToken == pair1.AccessToken {
+		t.Error("new access token should differ from old one")
+	}
+
+	// Using the original refresh token a second time must fail (revoked).
+	refreshBody2, _ := json.Marshal(map[string]string{"refresh_token": pair1.RefreshToken})
+	req = httptest.NewRequest(http.MethodPost, "/auth/refresh", bytes.NewBuffer(refreshBody2))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	h.HandleRefresh(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("reuse of revoked token: got %d want 401", rec.Code)
+	}
+}
