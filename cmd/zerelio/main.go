@@ -14,10 +14,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/zerelio/knowledge/internal/api"
-	"github.com/zerelio/knowledge/internal/auth"
-	"github.com/zerelio/knowledge/internal/discovery"
-	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/zerelio/internal/api"
+	"github.com/zerelio/zerelio/internal/auth"
+	"github.com/zerelio/zerelio/internal/discovery"
+	"github.com/zerelio/zerelio/internal/storage"
 )
 
 func main() {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/zerelio/knowledge/pkg/types"
+	"github.com/zerelio/zerelio/pkg/types"
 )
 
 type MemoryBackend struct {

@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/zerelio/knowledge/pkg/types"
+	"github.com/zerelio/zerelio/pkg/types"
 )
 
 // PGBackend is the production PostgreSQL storage backend.

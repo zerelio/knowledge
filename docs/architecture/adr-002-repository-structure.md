@@ -24,7 +24,7 @@ zerelio/
   README.md
 
   knowledge/                        # Zerelio Knowledge (Apache-2.0)
-    go.mod                          # github.com/zerelio/knowledge
+    go.mod                          # github.com/zerelio/zerelio
     cmd/
       zerelio/                      # CLI binary (Cobra)
       zerelio-server/               # Server binary

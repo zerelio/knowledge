@@ -3,7 +3,7 @@ package storage
 import (
 	"context"
 
-	"github.com/zerelio/knowledge/pkg/types"
+	"github.com/zerelio/zerelio/pkg/types"
 )
 
 type ResourceFilter struct {

@@ -12,10 +12,10 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/zerelio/knowledge/internal/auth"
-	"github.com/zerelio/knowledge/internal/discovery"
-	"github.com/zerelio/knowledge/internal/storage"
-	"github.com/zerelio/knowledge/pkg/types"
+	"github.com/zerelio/zerelio/internal/auth"
+	"github.com/zerelio/zerelio/internal/discovery"
+	"github.com/zerelio/zerelio/internal/storage"
+	"github.com/zerelio/zerelio/pkg/types"
 )
 
 func newTestHandler(t *testing.T) *Handler {

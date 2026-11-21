@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zerelio/knowledge/internal/storage"
-	"github.com/zerelio/knowledge/pkg/types"
+	"github.com/zerelio/zerelio/internal/storage"
+	"github.com/zerelio/zerelio/pkg/types"
 )
 
 // Orchestrator coordinates discovery runs across all registered plugins.

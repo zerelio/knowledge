@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerelio/knowledge/internal/storage"
-	"github.com/zerelio/knowledge/pkg/types"
+	"github.com/zerelio/zerelio/internal/storage"
+	"github.com/zerelio/zerelio/pkg/types"
 )
 
 func noopLogger() *slog.Logger {

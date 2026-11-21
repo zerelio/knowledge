@@ -19,15 +19,12 @@ jobs:
           cache: true
 
       - name: Build
-        working-directory: knowledge
         run: go build -buildvcs=false ./...
 
       - name: Test
-        working-directory: knowledge
         run: go test -buildvcs=false -race -count=1 -timeout 120s ./...
 
       - name: Vet
-        working-directory: knowledge
         run: go vet ./...
 
   lint:
@@ -45,7 +42,6 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
-          working-directory: knowledge
 
   license-boundary:
     name: OSS/Commercial boundary check
@@ -59,7 +55,7 @@ jobs:
           # security/ may only depend on public knowledge APIs — never internal/ packages.
           # This check is a no-op until the security/ module exists.
           if [ -d "security" ]; then
-            if grep -rn --include="*.go" "github.com/zerelio/knowledge/internal" security/ 2>/dev/null | grep -v "_test.go"; then
+            if grep -rn --include="*.go" "github.com/zerelio/zerelio/internal" security/ 2>/dev/null | grep -v "_test.go"; then
               echo "ERROR: security/ imports knowledge/internal/ — only public APIs allowed"
               exit 1
             fi
