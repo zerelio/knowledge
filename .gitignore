@@ -18,6 +18,15 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
+
+# Internal dev artifacts — never commit these
+AGENTS.md
+CURRENT_STATE.md
+NEXT_SESSION.md
+ROADMAP.md
+docs/execution-log/
+docs/phase-zero/
+docs/research/
 dist/
 build/
 .eggs/
