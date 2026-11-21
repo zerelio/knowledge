@@ -104,8 +104,11 @@ jobs:
           # G115: int conversion — range validated before cast
           # G118: context.Background in goroutines — intentional (post-discovery jobs must outlive request)
           # G304/G703: file read from variable — expected in credential file provider
-          # G404: math/rand for retry jitter — not cryptographic use
-          args: "-exclude=G103,G104,G115,G118,G304,G404,G703 ./..."
+          # G404: math/rand for retry jitter — non-cryptographic use
+          # G602: slice bounds — taint analysis false positive
+          # G705: XSS via fmt.Fprintf in MCP SSE — msg is server-generated JSON, not user input
+          # G710: open redirect — return_url sanitised to relative paths; authorize goes to OIDC provider config
+          args: "-exclude=G103,G104,G115,G118,G304,G404,G602,G703,G705,G710 ./..."
         env:
           CGO_ENABLED: "0"
 
