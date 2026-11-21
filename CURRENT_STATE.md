@@ -1,31 +1,29 @@
 # CURRENT_STATE.md — Zerelio Platform
 
-Last updated: 2026-11-21 (Session 001)
+Last updated: 2026-11-21 (Session 002)
 
-## Status: Foundation complete — core server functional
+## Status: Milestone 0.2 in progress — auth hardened, storage interface complete
 
-The `knowledge/` module has a working, tested Go server.
-
-## What is implemented
-
-### Core server (`knowledge/`)
+### Core server
 
 | Component | Status | Notes |
 |-----------|--------|-------|
 | Auth — argon2id password hashing | ✅ Complete | 5 tests |
-| Auth — Ed25519 JWT service | ✅ Complete | 4 tests |
+| Auth — Ed25519 JWT service | ✅ Complete | JTI on access tokens, RefreshJTI exposed |
 | Auth — RBAC middleware | ✅ Complete | Authenticator + RequireRole |
-| Storage — Backend interface | ✅ Complete | 27 methods |
-| Storage — MemoryBackend | ✅ Complete | Thread-safe, testing use |
-| Storage — PGBackend | ✅ Complete | pgx/v5, type-aligned with schema |
-| API — HTTP handlers | ✅ Complete | 13 handlers, 5 tests |
+| Auth — Refresh token rotation | ✅ Complete | POST /api/v1/auth/refresh, single-use JTI |
+| Storage — Backend interface | ✅ Complete | 32 methods (added GetUserByID, 4 refresh token methods) |
+| Storage — MemoryBackend | ✅ Complete | Thread-safe, all 32 methods |
+| Storage — PGBackend | ✅ Complete | All 32 methods; UpdateScope persists last_run |
+| Storage — PGBackend integration tests | ✅ Complete | testcontainers-go, build tag: integration |
+| API — HTTP handlers | ✅ Complete | 14 handlers (added HandleRefresh), 6 tests |
 | Discovery — Plugin interface | ✅ Complete | Channel-based streaming |
-| Discovery — Orchestrator | ✅ Complete | Async runs, 2 tests |
+| Discovery — Orchestrator | ✅ Complete | Updates scope LastRun + ResourceCount after run |
 | DB — Initial schema migration | ✅ Complete | 001_initial_schema.up.sql |
 | Server entrypoint | ✅ Complete | Graceful shutdown, JWT key loading |
 | Docker Compose | ✅ Complete | postgres (AGE) + zerelio |
 | Dockerfile | ✅ Complete | Distroless, CGO disabled |
-| GitHub Actions CI | ✅ Complete | test + lint + boundary check |
+| GitHub Actions CI | ✅ Complete | test + lint + boundary check + integration tests |
 
 ### Documentation
 
@@ -42,22 +40,21 @@ The `knowledge/` module has a working, tested Go server.
 ## Test coverage
 
 ```
-knowledge/internal/auth       — 9 tests (password hashing, JWT, middleware)
-knowledge/internal/api        — 5 tests (register, login, CRUD resources)
-knowledge/internal/discovery  — 2 tests (run scope, unknown plugin)
-Total: 16 tests, 0 races, all passing
+internal/auth       — 9 tests (password hashing, JWT, middleware)
+internal/api        — 6 tests (register, login, refresh, CRUD resources)
+internal/discovery  — 2 tests (run scope, unknown plugin)
+internal/storage    — integration tests (build tag: integration, needs Docker)
+Total: 17 unit tests, 0 races, all passing
 ```
 
 ## What is NOT yet implemented
 
-### High priority (next session)
+### High priority (Milestone 0.2 remainder)
 
-- [ ] PostgreSQL backend integration tests (testcontainers-go)
-- [ ] Discovery plugin migration (22 plugins from source repo)
+- [ ] Discovery plugin migration — wire one plugin (e.g. aws) end-to-end against the platform
 - [ ] Discovery API: scope CRUD endpoint tests
 - [ ] Graph module (AGE Cypher query layer)
 - [ ] Search module (hybrid BM25 + pgvector + graph)
-- [ ] Refresh token rotation endpoint (`POST /api/v1/refresh`)
 - [ ] go.work sum file (`go work sync`)
 
 ### Medium priority
@@ -77,7 +74,5 @@ Total: 16 tests, 0 races, all passing
 
 ## Known gaps
 
-1. `PGBackend` has no integration tests — it compiles but is untested against a real database.
-2. Discovery plugins are not yet migrated from the source repo.
-3. Refresh token storage (`refresh_tokens` table) exists in schema but `POST /refresh` endpoint is not wired.
-4. `DiscoveryScope.CreatedAt/UpdatedAt` are in the DB schema but not in the Go type — the type uses `LastRun`.
+1. Discovery plugins exist as standalone gRPC binaries (24 repos) but none are registered with the orchestrator. A scope run always fails "plugin not found".
+2. DiscoveryScope.CreatedAt/UpdatedAt are not read from DB (zero values in Go type). Low priority — data is persisted by Postgres default.
