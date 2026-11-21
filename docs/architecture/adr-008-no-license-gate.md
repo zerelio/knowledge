@@ -49,7 +49,7 @@ in-process token check in the OSS binary).
 ## Consequences
 
 - `security/license/` and its JWT dependency are deleted.
-- The `replace github.com/zerelio/zerelio => ../` in security/go.mod is kept
+- The `replace github.com/zerelio/knowledge => ../` in security/go.mod is kept
   because rbac/ and threat/ still import pkg/types.
 - ADR-005's mention of "per-seat or per-node pricing via Ed25519 JWT" is
   superseded by this decision.

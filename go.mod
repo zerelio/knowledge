@@ -1,4 +1,4 @@
-module github.com/zerelio/zerelio
+module github.com/zerelio/knowledge
 
 go 1.26.0
 

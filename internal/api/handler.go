@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/zerelio/zerelio/internal/auth"
-	"github.com/zerelio/zerelio/internal/discovery"
-	"github.com/zerelio/zerelio/internal/docs"
-	"github.com/zerelio/zerelio/internal/events"
-	"github.com/zerelio/zerelio/internal/graph"
-	"github.com/zerelio/zerelio/internal/oidcauth"
-	"github.com/zerelio/zerelio/internal/search"
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/auth"
+	"github.com/zerelio/knowledge/internal/discovery"
+	"github.com/zerelio/knowledge/internal/docs"
+	"github.com/zerelio/knowledge/internal/events"
+	"github.com/zerelio/knowledge/internal/graph"
+	"github.com/zerelio/knowledge/internal/oidcauth"
+	"github.com/zerelio/knowledge/internal/search"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 type Handler struct {

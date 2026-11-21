@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 type ResourceFilter struct {

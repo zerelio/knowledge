@@ -10,7 +10,7 @@ import (
 
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 
 	"github.com/testcontainers/testcontainers-go"
 )

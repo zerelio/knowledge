@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/graph"
-	"github.com/zerelio/zerelio/internal/llm"
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/graph"
+	"github.com/zerelio/knowledge/internal/llm"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // Document is a generated markdown document about a resource.

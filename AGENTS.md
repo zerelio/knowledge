@@ -29,7 +29,7 @@ zerelio/
 2. **Never push** to any remote repository.
 3. **Never publish** packages, releases, or Docker images.
 4. **Never provision** paid infrastructure.
-5. **security/ must never import** `github.com/zerelio/zerelio/internal/` packages. The CI `license-boundary` job enforces this.
+5. **security/ must never import** `github.com/zerelio/knowledge/internal/` packages. The CI `license-boundary` job enforces this.
 
 ## Development commands
 

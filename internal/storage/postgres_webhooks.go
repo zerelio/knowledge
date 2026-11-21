@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // ---- Webhook subscriptions ----

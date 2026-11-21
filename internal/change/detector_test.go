@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/change"
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/change"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 func newResource(id string, props map[string]string) *types.Resource {

@@ -3,7 +3,7 @@ package search
 import (
 	"strings"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // mmrRerank applies Maximal Marginal Relevance to a result list.

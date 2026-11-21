@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerelio/zerelio/pkg/types"
-	"github.com/zerelio/zerelio/security/threat"
+	"github.com/zerelio/knowledge/pkg/types"
+	"github.com/zerelio/knowledge/security/threat"
 )
 
 func newResource(id, resType string, props map[string]string) *types.Resource {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // ---- Generation logs ----

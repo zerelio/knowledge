@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/oidcauth"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/oidcauth"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // HandleOIDCAuthorize starts the OIDC login flow.

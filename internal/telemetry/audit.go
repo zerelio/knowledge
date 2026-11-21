@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/zerelio/zerelio/internal/auth"
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/auth"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // AuditLogger returns middleware that records mutation requests (POST, PUT, PATCH, DELETE)

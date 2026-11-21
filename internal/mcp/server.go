@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/graph"
-	"github.com/zerelio/zerelio/internal/search"
-	"github.com/zerelio/zerelio/internal/storage"
+	"github.com/zerelio/knowledge/internal/graph"
+	"github.com/zerelio/knowledge/internal/search"
+	"github.com/zerelio/knowledge/internal/storage"
 )
 
 // Server is the core MCP server. It holds storage references and routes

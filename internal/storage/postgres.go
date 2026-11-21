@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // tenantContextKey is a context key for the current tenant ID.
@@ -107,6 +107,10 @@ func (p *PGBackend) StoreResources(ctx context.Context, resources []*types.Resou
 		if rawData == nil {
 			rawData = json.RawMessage("{}")
 		}
+		tags := r.Tags
+		if tags == nil {
+			tags = []string{}
+		}
 		batch.Queue(`
 			INSERT INTO resources (
 				id, tenant_id, name, type, provider, region, account_id,
@@ -120,7 +124,7 @@ func (p *PGBackend) StoreResources(ctx context.Context, resources []*types.Resou
 				valid_from=EXCLUDED.valid_from, valid_to=EXCLUDED.valid_to,
 				updated_at=now()`,
 			r.ID, r.TenantID, r.Name, r.Type, r.Provider, r.Region, r.AccountID,
-			r.Tags, propsJSON, rawData, r.DiscoveredAt, r.ValidFrom, r.ValidTo,
+			tags, propsJSON, rawData, r.DiscoveredAt, r.ValidFrom, r.ValidTo,
 		)
 	}
 

@@ -47,7 +47,7 @@ jobs:
 
       - name: Verify no internal/ imports
         run: |
-          if grep -rn --include="*.go" "github.com/zerelio/zerelio/internal" security/ 2>/dev/null | grep -v "_test.go"; then
+          if grep -rn --include="*.go" "github.com/zerelio/knowledge/internal" security/ 2>/dev/null | grep -v "_test.go"; then
             echo "FAIL: security/ imports zerelio/internal/ — only pkg/ is allowed"
             exit 1
           fi

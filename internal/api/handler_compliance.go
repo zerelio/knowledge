@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/zerelio/zerelio/internal/auth"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/auth"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // HandleListKnowledgeSummaries returns pre-computed community-level summaries.

@@ -78,4 +78,4 @@ Thank you for installing {{ .Chart.Name }} v{{ .Chart.AppVersion }}!
     -H "Content-Type: application/json" \
     -d '{"name":"my-infra","description":"Initial infrastructure discovery"}'
 
-  For full API documentation see: https://github.com/zerelio/zerelio/docs
+  For full API documentation see: https://github.com/zerelio/knowledge/docs

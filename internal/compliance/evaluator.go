@@ -28,7 +28,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // Rule is the single interface every compliance check must implement.

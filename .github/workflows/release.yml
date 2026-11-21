@@ -104,4 +104,4 @@ jobs:
               ZERELIO_JWT_SECRET=$(openssl rand -hex 32) docker compose -f - up -d
             ```
 
-            See [OPERATIONS.md](https://github.com/zerelio/zerelio/blob/main/OPERATIONS.md) for full deployment guide.
+            See [OPERATIONS.md](https://github.com/zerelio/knowledge/blob/main/OPERATIONS.md) for full deployment guide.

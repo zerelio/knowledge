@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/zerelio/zerelio/internal/llm"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/llm"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 const defaultBatchSize = 50

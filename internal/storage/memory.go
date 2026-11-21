@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 type MemoryBackend struct {

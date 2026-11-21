@@ -36,7 +36,7 @@ Target: `~/Desktop/GIT/zerelio/knowledge/plugins/aws/`
 Steps:
 - Read the source plugin carefully (read-only source)
 - Create new plugin module under `knowledge/plugins/aws/`
-- Update import paths: `kt/plugins/aws` → `github.com/zerelio/zerelio/plugins/aws`
+- Update import paths: `kt/plugins/aws` → `github.com/zerelio/knowledge/plugins/aws`
 - Implement the `discovery.Plugin` interface
 - Add plugin to `go.work`
 

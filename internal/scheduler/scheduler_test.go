@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // mockRunner is a counting ScopeRunner for tests.

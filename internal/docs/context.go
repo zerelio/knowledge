@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/zerelio/zerelio/internal/graph"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/graph"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // ContextPacker assembles a text context block from a resource and its graph

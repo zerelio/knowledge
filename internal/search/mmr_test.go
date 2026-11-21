@@ -3,7 +3,7 @@ package search
 import (
 	"testing"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 func makeResult(id, resType string, score float64) Result {

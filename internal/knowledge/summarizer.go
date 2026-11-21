@@ -28,9 +28,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/llm"
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/llm"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // Summarizer generates and stores community-level infrastructure summaries.

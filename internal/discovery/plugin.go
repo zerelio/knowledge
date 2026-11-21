@@ -3,7 +3,7 @@ package discovery
 import (
 	"context"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // Plugin is the interface that all discovery plugins must implement.

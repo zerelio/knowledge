@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // RecordChange inserts a resource change record into the resource_changes table.

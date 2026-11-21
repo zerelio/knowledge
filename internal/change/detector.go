@@ -9,8 +9,8 @@ import (
 	"maps"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // Detector compares newly discovered resources against the stored state and

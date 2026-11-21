@@ -9,7 +9,7 @@ import (
 	"sync"
 
 	"github.com/robfig/cron/v3"
-	"github.com/zerelio/zerelio/internal/storage"
+	"github.com/zerelio/knowledge/internal/storage"
 )
 
 // ScopeRunner is the minimal interface the scheduler needs from the orchestrator.

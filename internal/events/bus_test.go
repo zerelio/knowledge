@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/events"
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/events"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 func nopLogger() *slog.Logger {

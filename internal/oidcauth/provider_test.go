@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zerelio/zerelio/internal/oidcauth"
+	"github.com/zerelio/knowledge/internal/oidcauth"
 )
 
 // statePayload mirrors the unexported struct to build test state tokens.

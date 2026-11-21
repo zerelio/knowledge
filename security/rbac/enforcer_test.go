@@ -3,7 +3,7 @@ package rbac_test
 import (
 	"testing"
 
-	"github.com/zerelio/zerelio/security/rbac"
+	"github.com/zerelio/knowledge/security/rbac"
 )
 
 func TestDefaultPolicy_Viewer(t *testing.T) {

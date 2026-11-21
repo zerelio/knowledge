@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/zerelio/zerelio/internal/llm"
+	"github.com/zerelio/knowledge/internal/llm"
 )
 
 func TestNoopProvider(t *testing.T) {

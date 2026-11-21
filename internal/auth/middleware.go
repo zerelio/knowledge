@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/zerelio/zerelio/internal/storage"
+	"github.com/zerelio/knowledge/internal/storage"
 )
 
 func Authenticator(jwtSvc *JWTService) func(http.Handler) http.Handler {

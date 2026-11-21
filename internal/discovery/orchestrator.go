@@ -8,14 +8,14 @@ import (
 	"time"
 
 	sdkplugin "github.com/zerelio/plugin-sdk/plugin"
-	"github.com/zerelio/zerelio/internal/change"
-	"github.com/zerelio/zerelio/internal/compliance"
-	"github.com/zerelio/zerelio/internal/embedding"
-	"github.com/zerelio/zerelio/internal/events"
-	"github.com/zerelio/zerelio/internal/graph"
-	"github.com/zerelio/zerelio/internal/knowledge"
-	"github.com/zerelio/zerelio/internal/storage"
-	"github.com/zerelio/zerelio/pkg/types"
+	"github.com/zerelio/knowledge/internal/change"
+	"github.com/zerelio/knowledge/internal/compliance"
+	"github.com/zerelio/knowledge/internal/embedding"
+	"github.com/zerelio/knowledge/internal/events"
+	"github.com/zerelio/knowledge/internal/graph"
+	"github.com/zerelio/knowledge/internal/knowledge"
+	"github.com/zerelio/knowledge/internal/storage"
+	"github.com/zerelio/knowledge/pkg/types"
 )
 
 // Orchestrator coordinates discovery runs. It delegates subprocess plugin loading
