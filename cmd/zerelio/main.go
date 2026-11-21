@@ -263,6 +263,12 @@ func run(logger *slog.Logger) error {
 
 			r.Get("/docs/{id}", handler.HandleGenerateDoc)
 			r.Post("/runbooks", handler.HandleGenerateRunbook)
+			r.Get("/docs", handler.HandleListDocs)
+			r.Get("/runbooks", handler.HandleListRunbooks)
+
+			r.Get("/auth/me", handler.HandleMe)
+			r.Get("/auth/preferences", handler.HandleGetPreferences)
+			r.Put("/auth/preferences", handler.HandleSetPreferences)
 
 			r.Get("/generations", handler.HandleListGenerations)
 			r.Get("/generations/{id}", handler.HandleGetGeneration)
@@ -304,6 +310,7 @@ func run(logger *slog.Logger) error {
 				r.Delete("/admin/users/{id}", handler.HandleDeleteUser)
 				r.Get("/admin/audit", handler.HandleListAuditEvents)
 				r.Get("/admin/quality", handler.HandleQualityMetrics)
+				r.Get("/admin/llm/profiles", handler.HandleListLLMProfiles)
 			})
 		})
 	})

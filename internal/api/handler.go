@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -1036,5 +1037,132 @@ func (h *Handler) HandleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete webhook")
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleMe returns the authenticated user's profile.
+// GET /api/v1/auth/me
+func (h *Handler) HandleMe(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	users, err := h.store.ListUsers(r.Context(), claims.TenantID)
+	if err != nil {
+		h.logger.Error("get profile", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to get profile")
+		return
+	}
+	for _, u := range users {
+		if u.Email == claims.Email {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"id":        u.ID,
+				"email":     u.Email,
+				"roles":     u.Roles,
+				"tenant_id": u.TenantID,
+			})
+			return
+		}
+	}
+	// Fallback: return claims directly (e.g. dev-auth mode).
+	writeJSON(w, http.StatusOK, map[string]any{
+		"email":     claims.Email,
+		"roles":     claims.Roles,
+		"tenant_id": claims.TenantID,
+	})
+}
+
+// HandleListLLMProfiles returns configured LLM profiles derived from environment variables.
+// GET /api/v1/admin/llm/profiles
+func (h *Handler) HandleListLLMProfiles(w http.ResponseWriter, r *http.Request) {
+	profiles := []map[string]any{}
+
+	provider := getEnvOr("ZERELIO_LLM_PROVIDER", "openai")
+	apiKey := os.Getenv("ZERELIO_LLM_API_KEY")
+	model := os.Getenv("ZERELIO_LLM_MODEL")
+	baseURL := os.Getenv("ZERELIO_LLM_BASE_URL")
+
+	if apiKey != "" || provider == "ollama" {
+		if model == "" {
+			switch provider {
+			case "openai":
+				model = "gpt-4o-mini"
+			case "anthropic":
+				model = "claude-3-5-sonnet-20241022"
+			case "ollama":
+				model = "llama3"
+			default:
+				model = "gpt-4o-mini"
+			}
+		}
+		profile := map[string]any{
+			"name":       provider,
+			"provider":   provider,
+			"model":      model,
+			"is_default": true,
+		}
+		if baseURL != "" {
+			profile["base_url"] = baseURL
+		}
+		profiles = append(profiles, profile)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"profiles": profiles})
+}
+
+// getEnvOr returns the environment variable value for key, or fallback if unset/empty.
+func getEnvOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// HandleListDocs returns all doc-type generations for the authenticated tenant.
+// GET /api/v1/docs
+func (h *Handler) HandleListDocs(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	all, err := h.store.ListGenerations(r.Context(), claims.TenantID, "", 1000)
+	if err != nil {
+		h.logger.Error("list docs", "error", err)
+		all = nil
+	}
+	docs := make([]*types.GenerationLog, 0)
+	for _, g := range all {
+		if g.Type == types.GenerationTypeDoc {
+			docs = append(docs, g)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"docs": docs})
+}
+
+// HandleListRunbooks returns all runbook-type generations for the authenticated tenant.
+// GET /api/v1/runbooks
+func (h *Handler) HandleListRunbooks(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromContext(r.Context())
+	all, err := h.store.ListGenerations(r.Context(), claims.TenantID, "", 1000)
+	if err != nil {
+		h.logger.Error("list runbooks", "error", err)
+		all = nil
+	}
+	runbooks := make([]*types.GenerationLog, 0)
+	for _, g := range all {
+		if g.Type == types.GenerationTypeRunbook {
+			runbooks = append(runbooks, g)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runbooks": runbooks})
+}
+
+// HandleGetPreferences returns the user's preferences.
+// GET /api/v1/auth/preferences
+func (h *Handler) HandleGetPreferences(w http.ResponseWriter, r *http.Request) {
+	// Theme is managed client-side; return minimal server-side defaults.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"theme":         "dark",
+		"notifications": true,
+	})
+}
+
+// HandleSetPreferences accepts preference updates (no-op — stored client-side).
+// PUT /api/v1/auth/preferences
+func (h *Handler) HandleSetPreferences(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
