@@ -21,8 +21,6 @@ require (
 	golang.org/x/time v0.15.0
 )
 
-replace github.com/zerelio/plugin-sdk => ../plugin-sdk
-
 require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20261006220739-8c912ac31dd4 // indirect
@@ -88,3 +86,5 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/zerelio/plugin-sdk => ../plugin-sdk

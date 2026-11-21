@@ -18,7 +18,18 @@ jobs:
       packages: write   # push to ghcr.io
 
     steps:
+      # Check out main repo under workspace/zerelio/
       - uses: actions/checkout@v4
+        with:
+          path: zerelio
+
+      # Check out plugin-sdk under workspace/plugin-sdk/ so the
+      # go.mod replace directive (../plugin-sdk) resolves inside Docker.
+      - uses: actions/checkout@v4
+        with:
+          repository: zerelio/plugin-sdk
+          path: plugin-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up QEMU (multi-platform emulation)
         uses: docker/setup-qemu-action@v3
@@ -48,10 +59,13 @@ jobs:
             org.opencontainers.image.vendor=Zerelio
             org.opencontainers.image.licenses=Apache-2.0
 
+      # Build context is the workspace root; Dockerfile is at zerelio/Dockerfile.
+      # This makes both zerelio/ and plugin-sdk/ available to COPY in the Dockerfile.
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: zerelio/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
