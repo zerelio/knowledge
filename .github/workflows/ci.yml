@@ -36,8 +36,8 @@ jobs:
 
       - name: Test
         run: go test -buildvcs=false -race -count=1 -timeout 120s ./...
-        env:
-          CGO_ENABLED: "0"
+        # CGO_ENABLED=1 is required for the race detector (-race uses C).
+        # This is safe on ubuntu-latest where the C toolchain is fully available.
 
       - name: Integration tests
         run: go test -buildvcs=false -tags=integration -race -count=1 -timeout 300s ./internal/storage/
